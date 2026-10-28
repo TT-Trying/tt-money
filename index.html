@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>TT Money</title>
+  <meta name="theme-color" content="#18286A" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0F1530" media="(prefers-color-scheme: dark)">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon-192.png">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Thai:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="top">
+    <h1 class="brand">TT Money</h1>
+    <span id="sync" class="sync" role="status" aria-live="polite"></span>
+    <button id="btn-refresh" class="icon-btn" type="button" aria-label="รีเฟรช">
+      <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M12 5a7 7 0 0 1 6.32 4H15v2h7V4h-2v3.1A9 9 0 1 0 21 13h-2a7 7 0 1 1-7-8z"/></svg>
+    </button>
+  </header>
+
+  <main id="main">
+    <section id="v-setup" class="view" hidden></section>
+    <section id="v-home" class="view" hidden></section>
+    <section id="v-list" class="view" hidden></section>
+    <section id="v-wallets" class="view" hidden></section>
+  </main>
+
+  <nav class="tabs" id="tabs" aria-label="เมนูหลัก" hidden>
+    <button type="button" data-view="home" class="tab">ภาพรวม</button>
+    <button type="button" data-view="list" class="tab">รายการ</button>
+    <button type="button" data-view="wallets" class="tab">กระเป๋า</button>
+  </nav>
+  <button type="button" id="btn-add" class="fab" aria-label="จดรายการใหม่" hidden>
+    <svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true"><path fill="currentColor" d="M11 4h2v7h7v2h-7v7h-2v-7H4v-2h7z"/></svg>
+    <span>จด</span>
+  </button>
+
+  <div id="sheet" class="sheet" role="dialog" aria-modal="true" aria-label="จดรายการ" hidden></div>
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+
+  <script src="app.js"></script>
+</body>
+</html>

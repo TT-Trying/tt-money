@@ -183,13 +183,15 @@ function derive() {
     for (const op of liveOps(S.serverEpoch)) eachTx(op, (t, s) => txIntoBoot(b, t, s));
     S.boot = b;
   } else S.boot = null;
-  const L = S.month && S.lists[S.month];
-  if (L) {
-    const d = clone(L.data) || {};
-    d.items = d.items || [];
-    for (const op of liveOps(L.epoch)) eachTx(op, (t, s) => txIntoList(d, S.month, t, s));
-    S.list = { ...d, month: S.month };
-  } else S.list = null;
+  S.list = S.month ? deriveListFor(S.month) : null;
+}
+function deriveListFor(m) {
+  const L = S.lists[m];
+  if (!L) return null;
+  const d = clone(L.data) || {};
+  d.items = d.items || [];
+  for (const op of liveOps(L.epoch)) eachTx(op, (t, s) => txIntoList(d, m, t, s));
+  return { ...d, month: m };
 }
 function confirmOp(op) {
   op.confirmed = ++S.epoch;
@@ -264,7 +266,6 @@ function saveLists() {
   const keep = Object.keys(S.lists).sort().reverse().slice(0, MAX_CACHED_LISTS);
   const out = {};
   for (const m of keep) out[m] = S.lists[m].data;
-  for (const m of Object.keys(S.lists)) if (!keep.includes(m)) delete S.lists[m];
   LS.set('ttm_lists', out);
 }
 function loadList(month, bg) {
@@ -517,7 +518,8 @@ function renderHome() {
       h('div', { class: 'hero-amount num' }, h('small', null, '฿'), tw('total', total, null, true)),
       h('div', { class: 'hero-sub' },
         h('span', null, 'ใช้ได้ ', h('b', { class: 'num' }, tw('avail', round2(total - savings)))),
-        h('span', null, 'เงินเก็บ ', h('b', { class: 'num' }, tw('sav', savings))))),
+        h('span', null, 'เงินเก็บ ', h('b', { class: 'num' }, tw('sav', savings)))),
+      dailyBox(ws, round2(total - savings))),
   ];
   if (notStarted) els.push(h('div', { class: 'notice' },
     'ยังไม่ได้ใส่ยอดตั้งต้นของกระเป๋า ยอดคงเหลือจะยังไม่ตรงกับเงินจริง',
@@ -550,7 +552,33 @@ function renderHome() {
   $('#v-home').replaceChildren(...els);
 }
 
-function txItem(t) {
+// งบวันนี้ = (เงินที่ใช้ได้ + ที่จ่ายไปแล้ววันนี้) ÷ จำนวนวันที่เหลือในเดือน (นับวันนี้ด้วย)
+// บวกที่จ่ายวันนี้กลับเข้าไป จะได้ไม่ใช่ว่ายิ่งจ่าย งบวันนี้ยิ่งหด
+function dailyBox(ws, avail) {
+  const now = new Date();
+  const today = ymdOf(now);
+  const saving = new Set(ws.filter((w) => w.type === 'Savings').map((w) => w.name));
+  const cm = deriveListFor(curMonth());
+  const src = cm ? cm.items : (S.boot.recent || []);
+  const spent = round2(src.filter((t) => t.type === 'Expense' && normDT(t.dateTime).slice(0, 10) === today && !saving.has(t.wallet))
+    .reduce((s, t) => s + (Number(t.amount) || 0), 0));
+  const dim = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+  const daysLeft = dim - now.getDate() + 1;
+  if (avail + spent <= 0) return h('div', { class: 'daily over' }, h('div', { class: 'd-top' }, 'เงินที่ใช้ได้หมดแล้ว'),
+    h('div', { class: 'd-sub' }, 'ลองโอนจากเงินเก็บ หรือรอรายรับเข้า'));
+  const perDay = Math.floor((avail + spent) / daysLeft);
+  const left = round2(perDay - spent);
+  const pct = perDay > 0 ? Math.min(100, spent / perDay * 100) : 100;
+  return h('div', { class: 'daily' + (left < 0 ? ' over' : pct >= 80 ? ' near' : '') },
+    h('div', { class: 'd-top' },
+      left >= 0
+        ? [h('span', null, 'วันนี้ใช้ได้อีก'), h('b', { class: 'num' }, '฿', tw('dleft', left))]
+        : [h('span', null, 'วันนี้ใช้เกินงบ'), h('b', { class: 'num' }, '฿', tw('dover', Math.abs(left)))]),
+    h('div', { class: 'd-bar', 'aria-hidden': 'true' }, h('span', { 'data-bar': 'daily', 'data-w': pct })),
+    h('div', { class: 'd-sub num' }, `จ่ายวันนี้ ${money(spent)} จากงบวันละ ${money(perDay)} · เหลือ ${daysLeft} วันในเดือน`));
+}
+
+function txItem(t, opts) {
   const sign = t.type === 'Expense' ? '−' : t.type === 'Income' ? '+' : '';
   const cls = t.type === 'Expense' ? 'neg' : t.type === 'Income' ? 'pos' : '';
   const title = t.type === 'Transfer'
@@ -563,49 +591,150 @@ function txItem(t) {
   if (t.dateTime && t.source !== 'legacy') meta.push(normDT(t.dateTime).slice(11, 16));
   if (t.type === 'Expense' && t.myShare !== undefined && Number(t.myShare) !== Number(t.amount)) meta.push(`ส่วนของฉัน ${money(t.myShare)}`);
   const status = t.queued ? 'รอส่ง' : t.pending ? 'กำลังบันทึก' : null;
-  return h('li', { class: t.pending || t.queued ? 'is-pending' : null, 'data-txk': txKey(t) },
+  const busy = t.pending || t.queued;
+  const li = h('li', { class: (busy ? 'is-pending' : '') + (opts && opts.del ? ' has-del' : '') || null, 'data-txk': txKey(t) },
     h('button', { class: 'tx', type: 'button', onclick: () => openEntry(t) },
       h('span', { class: 'tx-dot ' + (t.type || '').toLowerCase(), 'aria-hidden': 'true' }),
       h('span', { class: 't1' }, title),
       h('span', { class: 'a num ' + cls }, sign + money(t.amount)),
       h('span', { class: 't2' }, status ? h('span', { class: 'pend' }, status) : null, meta.filter(Boolean).join(', '))));
+  if (opts && opts.del && !busy && !String(t.id || '').startsWith('tmp-')) li.append(delButton(t, li));
+  return li;
+}
+// ปุ่มลบข้างรายการ: กดครั้งแรกเป็น "ลบ?" กดซ้ำภายใน 3 วิถึงจะลบจริง (กันนิ้วลั่น) แล้วยังกดเลิกทำได้อีก
+const TRASH = '<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/></svg>';
+function delButton(t, li) {
+  const b = h('button', { type: 'button', class: 'tx-del', 'aria-label': 'ลบรายการ ' + (t.note || t.category || '') });
+  b.innerHTML = TRASH;
+  let timer = null;
+  b.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (!b.classList.contains('arm')) {
+      buzz(8);
+      b.classList.add('arm'); b.textContent = 'ลบ?'; b.setAttribute('aria-label', 'แตะอีกครั้งเพื่อยืนยันการลบ');
+      timer = setTimeout(() => { b.classList.remove('arm'); b.innerHTML = TRASH; }, 3000);
+      return;
+    }
+    clearTimeout(timer);
+    li.classList.add('removing');
+    setTimeout(() => deleteTx(t), reduceMotion() ? 0 : 220);
+  });
+  return b;
 }
 
-// ------------------------------------------------------------ list
-function renderList() {
-  const el = $('#v-list');
-  const head = h('div', { class: 'month-nav' },
-    h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'เดือนก่อน', onclick: () => moveMonth(-1) }, '‹'),
-    h('strong', null, monthLabel(S.month)),
-    h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'เดือนถัดไป', onclick: () => moveMonth(1) }, '›'));
-  if (!S.list) {
-    if (S.listErr[S.month]) {
-      el.replaceChildren(head, h('div', { class: 'card stack' }, h('p', { class: 'err' }, S.listErr[S.month]),
-        h('button', { class: 'btn ghost', type: 'button', onclick: () => { delete S.listErr[S.month]; render(); loadList(S.month); } }, 'ลองใหม่')));
-      return true;
-    }
-    el.replaceChildren(head, ...skeleton('list'));
-    return false;
-  }
-  const items = S.list.items;
-  if (!items.length) { el.replaceChildren(head, h('div', { class: 'empty' }, h('div', { class: 'empty-ico' }, '🗒️'), h('p', { class: 'muted' }, 'ไม่มีรายการในเดือนนี้'))); return true; }
+// ------------------------------------------------------------ list (+ ค้นหา)
+const SEARCH_MONTHS = 12;
+const share = (t) => Number(t.myShare !== undefined && t.myShare !== '' ? t.myShare : t.amount) || 0;
+function txMatches(t, words) {
+  const hay = [t.note, t.category, t.subCategory, t.wallet, t.toWallet, TYPE_LABEL[t.type], String(t.amount), money(t.amount)]
+    .filter(Boolean).join(' ').toLowerCase();
+  return words.every((w) => hay.includes(w));
+}
+function groupByDay(items) {
   const groups = [];
   for (const t of items) {
     const d = normDT(t.dateTime).slice(0, 10);
     if (!groups.length || groups[groups.length - 1].d !== d) groups.push({ d, items: [] });
     groups[groups.length - 1].items.push(t);
   }
-  const share = (t) => Number(t.myShare !== undefined && t.myShare !== '' ? t.myShare : t.amount) || 0;
+  return groups.map((g) => {
+    const dayExp = round2(g.items.filter((t) => t.type === 'Expense').reduce((s, t) => s + share(t), 0));
+    const y = g.d.slice(0, 4) !== String(new Date().getFullYear()) ? ' ' + g.d.slice(0, 4) : '';
+    return h('section', { class: 'card day-card' },
+      h('div', { class: 'day' }, h('span', null, dayLabel(g.d) + y), dayExp ? h('span', { class: 'num' }, 'จ่าย ' + money(dayExp)) : null),
+      h('ul', { class: 'tx-list' }, g.items.map((t) => txItem(t, { del: true }))));
+  });
+}
+
+function renderList() {
+  const el = $('#v-list');
+  const head = h('div', { class: 'month-nav' },
+    h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'เดือนก่อน', onclick: () => moveMonth(-1) }, '‹'),
+    h('strong', null, monthLabel(S.month)),
+    h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'เดือนถัดไป', onclick: () => moveMonth(1) }, '›'));
+  const input = h('input', { class: 'search-in', id: 'search', type: 'search', enterkeyhint: 'search', autocomplete: 'off',
+    placeholder: 'ค้นหา เช่น grab, กาแฟ, 55', value: S.q || '', 'aria-label': 'ค้นหารายการ' });
+  const clear = h('button', { type: 'button', class: 'search-x', 'aria-label': 'ล้างคำค้น', hidden: !S.q }, '×');
+  input.addEventListener('input', () => { S.q = input.value; clear.hidden = !S.q; fillListResults(); });
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') input.blur(); });
+  clear.addEventListener('click', () => { S.q = ''; input.value = ''; clear.hidden = true; fillListResults(); input.focus(); });
+  const bar = h('div', { class: 'search' },
+    h('span', { class: 'search-ico', 'aria-hidden': 'true' }, '⌕'), input, clear);
+  el.replaceChildren(head, bar, h('div', { id: 'list-results', class: 'list-results' }));
+  return fillListResults();
+}
+
+// วาดเฉพาะผลลัพธ์ (ไม่แตะช่องค้นหา พิมพ์ไปเรื่อย ๆ คีย์บอร์ดจะไม่หุบ)
+function fillListResults() {
+  const box = $('#list-results');
+  if (!box) return true;
+  const q = (S.q || '').trim().toLowerCase();
+  if (q) return fillSearch(box, q.split(/\s+/));
+  S.list = deriveListFor(S.month);
+  if (!S.list) {
+    if (S.listErr[S.month]) {
+      box.replaceChildren(h('div', { class: 'card stack' }, h('p', { class: 'err' }, S.listErr[S.month]),
+        h('button', { class: 'btn ghost', type: 'button', onclick: () => { delete S.listErr[S.month]; render(); loadList(S.month); } }, 'ลองใหม่')));
+      return true;
+    }
+    box.replaceChildren(...skeleton('list'));
+    return false;
+  }
+  const items = S.list.items;
+  if (!items.length) { box.replaceChildren(h('div', { class: 'empty' }, h('div', { class: 'empty-ico' }, '🗒️'), h('p', { class: 'muted' }, 'ไม่มีรายการในเดือนนี้'))); return true; }
   const exp = round2(items.filter((t) => t.type === 'Expense').reduce((s, t) => s + share(t), 0));
-  el.replaceChildren(head,
+  box.replaceChildren(
     h('p', { class: 'muted list-sum' }, `${items.length} รายการ · รายจ่ายรวม `, h('b', { class: 'num neg' }, tw('lexp:' + S.month, exp))),
-    ...groups.map((g) => {
-      const dayExp = round2(g.items.filter((t) => t.type === 'Expense').reduce((s, t) => s + share(t), 0));
-      return h('section', { class: 'card day-card' },
-        h('div', { class: 'day' }, h('span', null, dayLabel(g.d)), dayExp ? h('span', { class: 'num' }, 'จ่าย ' + money(dayExp)) : null),
-        h('ul', { class: 'tx-list' }, g.items.map(txItem)));
-    }));
+    ...groupByDay(items));
   return true;
+}
+
+function fillSearch(box, words) {
+  const scopeAll = S.searchScope === 'all';
+  const months = scopeAll ? Array.from({ length: SEARCH_MONTHS }, (_, i) => shiftMonth(curMonth(), -i)) : [S.month];
+  let items = [];
+  let missing = 0;
+  for (const m of months) {
+    const L = deriveListFor(m);
+    if (L) items = items.concat(L.items.filter((t) => txMatches(t, words)));
+    else missing++;
+  }
+  items.sort((a, z) => normDT(z.dateTime).localeCompare(normDT(a.dateTime)));
+  const scope = h('div', { class: 'chips' },
+    h('button', { type: 'button', class: 'chip', 'aria-pressed': String(!scopeAll), onclick: () => { S.searchScope = 'month'; fillListResults(); } }, 'เฉพาะ ' + monthLabel(S.month)),
+    h('button', { type: 'button', class: 'chip', 'aria-pressed': String(scopeAll), onclick: () => { S.searchScope = 'all'; loadSearchRange(); fillListResults(); } }, `ย้อนหลัง ${SEARCH_MONTHS} เดือน`));
+  const exp = round2(items.filter((t) => t.type === 'Expense').reduce((s, t) => s + share(t), 0));
+  const inc = round2(items.filter((t) => t.type === 'Income').reduce((s, t) => s + Number(t.amount || 0), 0));
+  const summary = h('div', { class: 'card search-sum' },
+    h('div', null, h('b', null, `พบ ${items.length} รายการ`), missing ? h('span', { class: 'muted loading-dots' }, ` กำลังโหลดอีก ${missing} เดือน`) : null),
+    items.length ? h('div', { class: 'num' },
+      exp ? h('span', null, 'จ่ายรวม ', h('b', { class: 'neg' }, money(exp))) : null,
+      inc ? h('span', null, 'รับรวม ', h('b', { class: 'pos' }, money(inc))) : null) : null);
+  const shown = items.slice(0, 200);
+  box.replaceChildren(scope, summary,
+    ...(items.length ? groupByDay(shown) : [h('div', { class: 'empty' }, h('div', { class: 'empty-ico' }, '🔍'),
+      h('p', { class: 'muted' }, scopeAll ? 'ไม่เจอรายการที่ตรงกัน' : 'ไม่เจอในเดือนนี้ ลองกด "ย้อนหลัง 12 เดือน"'))]),
+    items.length > shown.length ? h('p', { class: 'muted' }, `แสดง 200 รายการล่าสุด พิมพ์คำค้นให้เจาะจงขึ้นเพื่อดูที่เหลือ`) : null);
+  return true;
+}
+
+let rangeLoading = false;
+async function loadSearchRange() {
+  if (rangeLoading) return;
+  const months = Array.from({ length: SEARCH_MONTHS }, (_, i) => shiftMonth(curMonth(), -i)).filter((m) => !S.lists[m]);
+  if (!months.length) return;
+  rangeLoading = true;
+  let i = 0;
+  const worker = async () => {
+    while (i < months.length) {
+      const m = months[i++];
+      await loadList(m, true);
+      if (S.view === 'list' && S.q) fillListResults();
+    }
+  };
+  await Promise.all([worker(), worker(), worker()]);   // โหลดทีละ 3 เดือนพร้อมกัน
+  rangeLoading = false;
+  if (S.view === 'list' && S.q) fillListResults();
 }
 
 // ------------------------------------------------------------ wallets
@@ -867,8 +996,11 @@ async function submitEntry() {
 
 async function deleteEntry() {
   const tx = S.form.orig;
-  const id = S.form.editId;
   closeSheet();
+  deleteTx(tx);
+}
+async function deleteTx(tx) {
+  const id = tx.id;
   const op = { kind: 'delete', tx, confirmed: 0 };
   S.ops.push(op); render();
   buzz(15);
@@ -913,7 +1045,7 @@ function updateAmount(bump) {
   d.replaceChildren(h('small', null, '฿'), h('span', { class: 'amt' }, shown));
   if (bump && !reduceMotion()) { d.classList.remove('bump', 'shake'); void d.offsetWidth; d.classList.add('bump'); }
   const save = $('#entry-save');
-  if (save) save.replaceChildren(h('span', null, 'บันทึก'), a && Number(a) > 0 ? h('small', { class: 'num' }, '฿' + shown) : null);
+  if (save) save.replaceChildren(...[h('span', null, 'บันทึก'), Number(a) > 0 ? h('small', { class: 'num' }, '฿' + shown) : null].filter(Boolean));
   $('#entry-err').hidden = true;
 }
 
@@ -958,7 +1090,7 @@ function whenPanel(f, set) {
     const ymd = ymdOf(x);
     const i = Math.round((new Date(today.getFullYear(), today.getMonth(), today.getDate()) - new Date(x.getFullYear(), x.getMonth(), x.getDate())) / 864e5);
     return h('button', { type: 'button', class: 'day-chip', 'aria-pressed': String(ymd === d),
-      onclick: () => set({ dateTime: ymd + 'T' + (f.timeNow && i !== 0 ? '12:00' : t), timeNow: f.timeNow && i === 0 }) },
+      onclick: () => set({ dateTime: ymd + 'T' + (f.timeNow && i !== 0 ? '12:00' : f.dateTime.slice(11, 16)), timeNow: f.timeNow && i === 0 }) },
       h('span', { class: 'dw' }, i === 0 ? 'วันนี้' : i === 1 ? 'เมื่อวาน' : TH_DAYS[x.getDay()]),
       h('b', { class: 'num' }, x.getDate()),
       h('span', { class: 'dm' }, TH_MONTHS[x.getMonth()]));
@@ -969,7 +1101,7 @@ function whenPanel(f, set) {
     strip.prepend(dayBtn(new Date(y, m - 1, dd)));
   }
   const other = h('input', { type: 'date', class: 'sr-date', 'aria-label': 'เลือกวันอื่น', max: ymdOf(today), value: d,
-    onchange: (e) => { if (e.target.value) set({ dateTime: e.target.value + 'T' + t, timeNow: false }); } });
+    onchange: (e) => { if (e.target.value) set({ dateTime: e.target.value + 'T' + f.dateTime.slice(11, 16), timeNow: false }); } });
   strip.append(h('label', { class: 'day-chip other' }, h('span', { class: 'dw' }, 'วันอื่น'), h('b', null, '📅'), h('span', { class: 'dm' }, 'ปฏิทิน'), other));
   other.addEventListener('click', () => { try { other.showPicker(); } catch (e) { /* บาง browser เปิดเอง */ } });
 
@@ -979,14 +1111,40 @@ function whenPanel(f, set) {
     TIME_SLOTS.map(([lbl, hm]) => h('button', { type: 'button', class: 'chip', 'aria-pressed': String(!f.timeNow && t === hm),
       onclick: () => set({ dateTime: d + 'T' + hm, timeNow: false }) }, `${lbl} ${hm.slice(0, 2)}`)));
   const step = (mins, label) => h('button', { type: 'button', class: 'step', 'aria-label': label,
-    onclick: () => set({ dateTime: d + 'T' + shiftTime(t, mins), timeNow: false }) }, mins > 0 ? '+' : '−');
+    onclick: () => set({ dateTime: f.dateTime.slice(0, 11) + shiftTime(f.dateTime.slice(11, 16), mins), timeNow: false }) }, mins > 0 ? '+' : '−');
+  // ช่องชั่วโมง/นาที แตะแล้วพิมพ์ได้เลย (ชั่วโมงครบ 2 หลักจะข้ามไปช่องนาทีให้)
+  const tin = (val, label) => h('input', { class: 'tf-in num', type: 'text', inputmode: 'numeric', autocomplete: 'off', 'aria-label': label, value: val });
+  const hIn = tin(t.slice(0, 2), 'ชั่วโมง'), mIn = tin(t.slice(3, 5), 'นาที');
+  const commit = () => {
+    const hh = Math.min(23, Math.max(0, parseInt(hIn.value, 10) || 0));
+    const mm = Math.min(59, Math.max(0, parseInt(mIn.value, 10) || 0));
+    f.dateTime = d + 'T' + pad(hh) + ':' + pad(mm);
+    f.timeNow = false;
+    const pill = $('.when-pill span:nth-child(2)');
+    if (pill) pill.textContent = whenLabel(f);
+  };
+  for (const inp of [hIn, mIn]) {
+    // แตะแล้วพิมพ์ทับได้เลย: ตัวเลขตัวแรกที่พิมพ์จะล้างค่าเดิมก่อน
+    inp.addEventListener('focus', () => { inp._fresh = true; try { inp.select(); } catch (e) { /* ignore */ } });
+    inp.addEventListener('beforeinput', (e) => {
+      if (inp._fresh && e.inputType === 'insertText') { inp.value = ''; }
+      inp._fresh = false;
+    });
+    inp.addEventListener('input', () => {
+      inp.value = inp.value.replace(/\D/g, '').slice(0, 2);
+      commit();
+      if (inp === hIn && inp.value.length === 2) mIn.focus();
+    });
+    inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') inp.blur(); });
+    inp.addEventListener('blur', () => { commit(); inp.value = pad(inp === hIn ? f.dateTime.slice(11, 13) : f.dateTime.slice(14, 16)); });
+  }
   const fine = h('div', { class: 'time-fine' },
-    h('div', { class: 'tf-group' }, step(-60, 'ลดชั่วโมง'), h('div', { class: 'tf-val' }, h('b', { class: 'num' }, t.slice(0, 2)), h('span', null, 'ชม.')), step(60, 'เพิ่มชั่วโมง')),
+    h('div', { class: 'tf-group' }, step(-60, 'ลดชั่วโมง'), h('div', { class: 'tf-val' }, hIn, h('span', null, 'ชม.')), step(60, 'เพิ่มชั่วโมง')),
     h('b', { class: 'tf-colon' }, ':'),
-    h('div', { class: 'tf-group' }, step(-5, 'ลด 5 นาที'), h('div', { class: 'tf-val' }, h('b', { class: 'num' }, t.slice(3, 5)), h('span', null, 'นาที')), step(5, 'เพิ่ม 5 นาที')));
+    h('div', { class: 'tf-group' }, step(-5, 'ลด 5 นาที'), h('div', { class: 'tf-val' }, mIn, h('span', null, 'นาที')), step(5, 'เพิ่ม 5 นาที')));
   return h('div', { class: 'when-panel' },
     h('span', { class: 'lbl' }, 'วันไหน'), strip,
-    h('span', { class: 'lbl' }, 'กี่โมง'), slots, fine,
+    h('span', { class: 'lbl' }, 'กี่โมง'), slots, fine, h('p', { class: 'hint tf-hint' }, 'แตะตัวเลขเพื่อพิมพ์เวลาเองได้'),
     h('button', { type: 'button', class: 'btn when-done', onclick: () => set({ whenOpen: false }) }, 'เสร็จ'));
 }
 

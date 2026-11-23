@@ -23,6 +23,10 @@
     </button>
   </header>
 
+  <div id="ptr" class="ptr" aria-hidden="true">
+    <svg viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M12 5a7 7 0 0 1 6.32 4H15v2h7V4h-2v3.1A9 9 0 1 0 21 13h-2a7 7 0 1 1-7-8z"/></svg>
+  </div>
+
   <main id="main">
     <section id="v-setup" class="view" hidden></section>
     <section id="v-home" class="view" hidden></section>
@@ -31,9 +35,19 @@
   </main>
 
   <nav class="tabs" id="tabs" aria-label="เมนูหลัก" hidden>
-    <button type="button" data-view="home" class="tab">ภาพรวม</button>
-    <button type="button" data-view="list" class="tab">รายการ</button>
-    <button type="button" data-view="wallets" class="tab">กระเป๋า</button>
+    <span class="tab-ink" aria-hidden="true"></span>
+    <button type="button" data-view="home" class="tab">
+      <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 10.5 12 3.5l8.5 7V19a1.5 1.5 0 0 1-1.5 1.5h-4.5v-6h-5v6H5A1.5 1.5 0 0 1 3.5 19z"/></svg>
+      <span>ภาพรวม</span>
+    </button>
+    <button type="button" data-view="list" class="tab">
+      <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6h11M9 12h11M9 18h11"/><circle cx="4.5" cy="6" r=".6" fill="currentColor"/><circle cx="4.5" cy="12" r=".6" fill="currentColor"/><circle cx="4.5" cy="18" r=".6" fill="currentColor"/></svg>
+      <span>รายการ</span>
+    </button>
+    <button type="button" data-view="wallets" class="tab">
+      <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="6.5" width="18" height="13.5" rx="3"/><path d="M6 6.5V6a2.5 2.5 0 0 1 2.5-2.5H17M15.5 13.5h2.5"/></svg>
+      <span>กระเป๋า</span>
+    </button>
   </nav>
   <button type="button" id="btn-add" class="fab" aria-label="จดรายการใหม่" hidden>
     <svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true"><path fill="currentColor" d="M11 4h2v7h7v2h-7v7h-2v-7H4v-2h7z"/></svg>

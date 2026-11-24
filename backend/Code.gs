@@ -14,10 +14,18 @@ const WL_COUNT = 10;  // จำนวนช่อง (แถว 5-14)
 const TX_NCOLS = 13;  // ID, DateTime, Type, Category, SubCategory, Amount, MyShare, Wallet, ToWallet, Note, RentForMonth, Source, Deleted
 const WRITE_ACTIONS = ['addTransactions', 'updateTransaction', 'deleteTransaction', 'restoreTransaction',
   'addWallet', 'renameWallet', 'setWalletOpening', 'setCounted', 'setStartDate'];
+const CACHE_TTL = 600;          // จำผลการอ่านไว้ 10 นาที (ล้างทันทีเมื่อมีการเขียน หรือแก้ใน Sheet)
+const MAX_NOTE = 200;           // ความยาวสูงสุดของโน้ต
+const MAX_LABEL = 50;           // ความยาวสูงสุดของหมวด/หมวดย่อย
+const MAX_MONTHS = 24;          // ขอรายการได้สูงสุดกี่เดือนต่อครั้ง
+const BACKUP_FOLDER = 'TT Money Backups';
+const BACKUP_KEEP = 8;          // เก็บไฟล์สำรองล่าสุดกี่ชุด (สัปดาห์ละชุด = 2 เดือน)
 
 // ------------------------------------------------------------------ setup
 /** รันครั้งเดียว: สร้าง token + จำ Sheet + ตั้งรูปแบบคอลัมน์ข้อความ แล้วดู token ใน Execution log */
 function setup() {
+  const made = ensureStructure_();
+  if (made.length) Logger.log('สร้างแท็บใหม่ให้แล้ว: ' + made.join(', '));
   const props = PropertiesService.getScriptProperties();
   props.setProperty('SHEET_ID', SpreadsheetApp.getActive().getId());
   let created = false;
@@ -52,6 +60,135 @@ function selfTest() {
   Logger.log('จำนวนรายการ: ' + readTx_().length);
 }
 
+/** สร้างแท็บที่ยังไม่มี (แท็บที่มีอยู่แล้วจะไม่ถูกแตะ) ใช้กับ Sheet เปล่าได้เลย */
+function ensureStructure_() {
+  const ss = SpreadsheetApp.getActive();
+  const made = [];
+  const money = '#,##0.00';
+  if (!ss.getSheetByName(SHEETS.TX)) {
+    const sh = ss.insertSheet(SHEETS.TX);
+    sh.getRange(1, 1, 1, TX_NCOLS).setValues([['ID', 'DateTime', 'Type', 'Category', 'SubCategory', 'Amount', 'MyShare',
+      'Wallet', 'ToWallet', 'Note', 'RentForMonth', 'Source', 'Deleted']]).setFontWeight('bold');
+    sh.setFrozenRows(1);
+    sh.getRange('B2:B').setNumberFormat('yyyy-mm-dd hh:mm');
+    sh.getRange('F2:G').setNumberFormat(money);
+    made.push(SHEETS.TX);
+  }
+  if (!ss.getSheetByName(SHEETS.WL)) {
+    const sh = ss.insertSheet(SHEETS.WL);
+    const t = new Date();
+    sh.getRange('A1').setValue('ตั้งค่า').setFontWeight('bold');
+    sh.getRange('A2:C2').setValues([['วันเริ่มใช้แอพ', new Date(t.getFullYear(), t.getMonth(), t.getDate()), 'แก้ได้ในแอพ หน้ากระเป๋า']]);
+    sh.getRange('B2').setNumberFormat('yyyy-mm-dd');
+    sh.getRange(4, 1, 1, 7).setValues([['Wallet', 'Type', 'Opening balance', 'Calculated balance', 'Counted (ยอดจริง)', 'Difference', 'หมายเหตุ']])
+      .setFontWeight('bold');
+    const sum = function (type, col, r) {
+      return 'SUMIFS(Transactions!$F:$F,Transactions!$C:$C,"' + type + '",Transactions!$' + col + ':$' + col + ',$A' + r +
+        ',Transactions!$M:$M,"<>Y",Transactions!$B:$B,">="&N($B$2))';
+    };
+    const rows = [];
+    for (let i = 0; i < WL_COUNT; i++) {
+      const r = WL_FIRST + i;
+      rows.push([
+        '=IF($A' + r + '="","",$C' + r + '+' + sum('Income', 'H', r) + '-' + sum('Expense', 'H', r) + '-' + sum('Transfer', 'H', r) + '+' + sum('Transfer', 'I', r) + ')',
+        '=IF(OR($A' + r + '="",$E' + r + '=""),"",$E' + r + '-$D' + r + ')'
+      ]);
+    }
+    sh.getRange(WL_FIRST, 4, WL_COUNT, 1).setFormulas(rows.map(function (x) { return [x[0]]; }));
+    sh.getRange(WL_FIRST, 6, WL_COUNT, 1).setFormulas(rows.map(function (x) { return [x[1]]; }));
+    sh.getRange(WL_FIRST, 1, 1, 3).setValues([['เงินสด', 'Cash', 0]]);
+    const tot = WL_FIRST + WL_COUNT;
+    sh.getRange(tot, 1).setValue('รวม').setFontWeight('bold');
+    sh.getRange(tot, 3, 1, 2).setFormulas([['=SUM(C' + WL_FIRST + ':C' + (tot - 1) + ')', '=SUM(D' + WL_FIRST + ':D' + (tot - 1) + ')']]);
+    sh.getRange(WL_FIRST, 3, WL_COUNT + 1, 4).setNumberFormat(money);
+    sh.getRange(tot + 2, 1).setValue('Calculated = Opening + รายรับ − รายจ่าย − โอนออก + โอนเข้า (เฉพาะรายการตั้งแต่วันเริ่มใช้แอพ). ' +
+      'ห้ามย้ายแถว/คอลัมน์ เพราะแอพอ่านจากตำแหน่งนี้ (กระเป๋าอยู่แถว ' + WL_FIRST + '-' + (tot - 1) + ')');
+    made.push(SHEETS.WL);
+  }
+  if (!ss.getSheetByName(SHEETS.CAT)) {
+    const sh = ss.insertSheet(SHEETS.CAT);
+    sh.getRange('A1:C1').setValues([['Type', 'Category', 'Count']]).setFontWeight('bold');
+    const defs = [['Expense', 'อาหาร'], ['Expense', 'กาแฟ'], ['Expense', 'เดินทาง'], ['Expense', 'ของใช้'],
+      ['Expense', 'Subscriptions'], ['Expense', 'ค่าห้องรายเดือน'], ['Expense', 'อื่น ๆ'],
+      ['Income', 'เงินเดือน'], ['Income', 'รายได้เสริม'], ['Transfer', 'โอนย้าย']];
+    sh.getRange(2, 1, defs.length, 3).setValues(defs.map(function (d, i) { return [d[0], d[1], countFormula_(i + 2)]; }));
+    made.push(SHEETS.CAT);
+  }
+  if (!ss.getSheetByName(SHEETS.PS)) {
+    const sh = ss.insertSheet(SHEETS.PS);
+    sh.getRange('A1:F1').setValues([['Label', 'Type', 'Category', 'SubCategory', 'Amount', 'Wallet']]).setFontWeight('bold');
+    sh.getRange('A2:F2').setValues([['กาแฟ', 'Expense', 'กาแฟ', '', 55, '']]);
+    made.push(SHEETS.PS);
+  }
+  // ลบแท็บเปล่าที่ Google สร้างมาให้ (เฉพาะตอนเพิ่งสร้างแท็บของแอพ และแท็บนั้นว่างจริง ๆ)
+  if (made.length) {
+    ss.getSheets().forEach(function (sh) {
+      if (/^(Sheet1|ชีต1|แผ่นงาน1)$/.test(sh.getName()) && sh.getLastRow() === 0 && ss.getSheets().length > 1) ss.deleteSheet(sh);
+    });
+  }
+  return made;
+}
+
+function countFormula_(r) {
+  return '=COUNTIFS(Transactions!$C:$C,A' + r + ',Transactions!$D:$D,B' + r + ',Transactions!$M:$M,"<>Y")';
+}
+
+// ------------------------------------------------------------------ backup
+/** สำรอง Sheet ไปไว้ในโฟลเดอร์ "TT Money Backups" ใน Drive (เก็บแค่ BACKUP_KEEP ชุดล่าสุด) */
+function backupNow() {
+  const file = DriveApp.getFileById(ss_().getId());
+  const it = DriveApp.getFoldersByName(BACKUP_FOLDER);
+  const folder = it.hasNext() ? it.next() : DriveApp.createFolder(BACKUP_FOLDER);
+  const name = file.getName() + ' backup ' + Utilities.formatDate(new Date(), tz_(), 'yyyy-MM-dd HHmm');
+  file.makeCopy(name, folder);
+  const files = [];
+  const fi = folder.getFiles();
+  while (fi.hasNext()) {
+    const f = fi.next();
+    if (f.getName().indexOf(' backup ') >= 0) files.push(f);   // แตะเฉพาะไฟล์สำรองที่สคริปต์สร้าง
+  }
+  files.sort(function (a, b) { return b.getDateCreated().getTime() - a.getDateCreated().getTime(); });
+  files.slice(BACKUP_KEEP).forEach(function (f) { f.setTrashed(true); });
+  Logger.log('สำรองแล้ว: ' + name + ' (เก็บไว้ ' + Math.min(files.length, BACKUP_KEEP) + ' ชุด)');
+}
+
+/** ตั้งให้สำรองอัตโนมัติทุกวันอาทิตย์ตี 3 (รันครั้งเดียว) */
+function installWeeklyBackup() {
+  removeWeeklyBackup();
+  ScriptApp.newTrigger('backupNow').timeBased().onWeekDay(ScriptApp.WeekDay.SUNDAY).atHour(3).create();
+  Logger.log('ตั้งสำรองอัตโนมัติทุกวันอาทิตย์ ตี 3 แล้ว');
+  backupNow();
+}
+
+function removeWeeklyBackup() {
+  ScriptApp.getProjectTriggers().forEach(function (t) {
+    if (t.getHandlerFunction() === 'backupNow') ScriptApp.deleteTrigger(t);
+  });
+}
+
+// ------------------------------------------------------------------ cache
+// แคชผลการอ่าน: ผูกกับเลข REV ที่เปลี่ยนทุกครั้งที่มีการเขียน (ผ่านแอพ หรือแก้ใน Sheet เอง) แคชเก่าจึงไม่ถูกใช้อีก
+function rev_() { return PropertiesService.getScriptProperties().getProperty('REV') || '0'; }
+function bumpRev_() { PropertiesService.getScriptProperties().setProperty('REV', String(Date.now())); }
+
+/** simple trigger: ทำงานเองเมื่อมีคนแก้ใน Google Sheet ตรง ๆ แอพจะได้ไม่เห็นข้อมูลเก่า */
+function onEdit() {
+  try { bumpRev_(); } catch (err) { /* ignore */ }
+}
+
+function cached_(key, fn) {
+  const cache = CacheService.getScriptCache();
+  const k = 'r' + rev_() + ':' + key;
+  const hit = cache.get(k);
+  if (hit) return JSON.parse(hit);
+  const val = fn();
+  try {
+    const text = JSON.stringify(val);
+    if (Utilities.newBlob(text).getBytes().length < 95000) cache.put(k, text, CACHE_TTL);   // แคชรับได้ไม่เกิน 100KB ต่อชิ้น
+  } catch (err) { /* แคชไม่ได้ก็ไม่เป็นไร */ }
+  return val;
+}
+
 function newToken_() {
   return (Utilities.getUuid() + Utilities.getUuid()).replace(/-/g, '').slice(0, 40);
 }
@@ -70,18 +207,24 @@ function doPost(e) {
   }
   const token = PropertiesService.getScriptProperties().getProperty('TOKEN');
   if (!token || String(req.token) !== token) return out_({ ok: false, error: 'unauthorized' });
+  // เช็คว่าเป็นคำสั่งที่เราประกาศไว้จริง (กันชื่ออย่าง "constructor" ที่ object ทุกตัวมี)
+  if (typeof req.action !== 'string' || !Object.prototype.hasOwnProperty.call(ACTIONS, req.action)) {
+    return out_({ ok: false, error: 'unknown action' });
+  }
   const fn = ACTIONS[req.action];
-  if (!fn) return out_({ ok: false, error: 'unknown action' });
+  const isWrite = WRITE_ACTIONS.indexOf(req.action) >= 0;
+  const args = req.args && typeof req.args === 'object' ? req.args : {};
   let lock = null;
   try {
-    if (WRITE_ACTIONS.indexOf(req.action) >= 0) {
+    if (isWrite) {
       lock = LockService.getScriptLock();
       lock.waitLock(15000);
     }
-    return out_({ ok: true, data: fn(req.args || {}) });
+    return out_({ ok: true, data: fn(args) });
   } catch (err) {
     return out_({ ok: false, error: String(err && err.message ? err.message : err) });
   } finally {
+    if (isWrite) { SpreadsheetApp.flush(); bumpRev_(); memo_ = {}; }
     if (lock) lock.releaseLock();
   }
 }
@@ -92,8 +235,12 @@ function out_(obj) {
 
 const ACTIONS = {
   ping: function () { return { time: fmt_(new Date()) }; },
-  bootstrap: bootstrap_,
-  listTransactions: listTransactions_,
+  bootstrap: function () {
+    const b = cached_('boot:' + Utilities.formatDate(new Date(), tz_(), 'yyyy-MM-dd'), bootstrap_);
+    b.now = fmt_(new Date());
+    return b;
+  },
+  listTransactions: function (a) { return cached_('list:' + JSON.stringify(a), function () { return listTransactions_(a); }); },
   summary: summary_,
   addTransactions: addTransactions_,
   updateTransaction: updateTransaction_,
@@ -107,14 +254,21 @@ const ACTIONS = {
 };
 
 // ------------------------------------------------------------------ helpers
+// จำของที่เปิด/อ่านแล้วไว้ใช้ซ้ำภายในคำขอเดียว (เปิดไฟล์และอ่านชีตเป็นส่วนที่ช้าที่สุด)
+let memo_ = {};
 function ss_() {
+  if (memo_.ss) return memo_.ss;
   const id = PropertiesService.getScriptProperties().getProperty('SHEET_ID');
   if (!id) throw new Error('ยังไม่ได้รัน setup()');
-  return SpreadsheetApp.openById(id);
+  memo_.ss = SpreadsheetApp.openById(id);
+  return memo_.ss;
 }
 function sh_(name) {
+  memo_.sh = memo_.sh || {};
+  if (memo_.sh[name]) return memo_.sh[name];
   const s = ss_().getSheetByName(name);
   if (!s) throw new Error('ไม่พบแท็บ ' + name);
+  memo_.sh[name] = s;
   return s;
 }
 function tz_() { return Session.getScriptTimeZone(); }
@@ -122,8 +276,9 @@ function fmt_(d) { return Utilities.formatDate(d, tz_(), 'yyyy-MM-dd HH:mm'); }
 function month_(d) { return Utilities.formatDate(d, tz_(), 'yyyy-MM'); }
 function round2_(n) { return Math.round(n * 100) / 100; }
 function str_(v) { return v === null || v === undefined ? '' : String(v).trim(); }
-function safeText_(v) {
+function safeText_(v, max) {
   const s = str_(v);
+  if (max && s.length > max) throw new Error('ข้อความยาวเกิน ' + max + ' ตัวอักษร');
   return /^[=+\-@]/.test(s) ? ' ' + s : s;   // กัน note ที่ขึ้นต้นด้วย = ถูกตีเป็นสูตร
 }
 
@@ -135,6 +290,7 @@ function parseDateTime_(v) {
 }
 
 function readWallets_() {
+  if (memo_.wl) return memo_.wl;
   const rows = sh_(SHEETS.WL).getRange(WL_FIRST, 1, WL_COUNT, 7).getValues();
   const out = [];
   rows.forEach(function (r, i) {
@@ -148,14 +304,16 @@ function readWallets_() {
       note: str_(r[6])
     });
   });
+  memo_.wl = out;
   return out;
 }
 
 function readTx_() {
+  if (memo_.tx) return memo_.tx;
   const sh = sh_(SHEETS.TX);
   const last = sh.getLastRow();
-  if (last < 2) return [];
-  return sh.getRange(2, 1, last - 1, TX_NCOLS).getValues().map(function (r, i) {
+  if (last < 2) return (memo_.tx = []);
+  memo_.tx = sh.getRange(2, 1, last - 1, TX_NCOLS).getValues().map(function (r, i) {
     return {
       row: i + 2, id: str_(r[0]), dt: r[1] instanceof Date ? r[1] : null, type: str_(r[2]),
       category: str_(r[3]), subCategory: str_(r[4]), amount: Number(r[5]) || 0,
@@ -164,6 +322,7 @@ function readTx_() {
       source: str_(r[11]), deleted: str_(r[12]) === 'Y'
     };
   });
+  return memo_.tx;
 }
 
 function pub_(t) {
@@ -185,6 +344,7 @@ function normalize_(t, walletNames, allowNoWallet) {
   if (TYPES.indexOf(type) < 0) throw new Error('type ต้องเป็น Income, Expense หรือ Transfer');
   const amount = round2_(Number(t.amount));
   if (!isFinite(amount) || amount <= 0) throw new Error('จำนวนเงินต้องมากกว่า 0');
+  if (amount >= 1e10) throw new Error('จำนวนเงินมากเกินไป');
   let myShare = (t.myShare === undefined || t.myShare === null || t.myShare === '') ? amount : round2_(Number(t.myShare));
   if (type !== 'Expense') myShare = amount;
   if (!isFinite(myShare) || myShare < 0 || myShare > amount) throw new Error('MyShare ต้องอยู่ระหว่าง 0 ถึงจำนวนเงิน');
@@ -202,8 +362,8 @@ function normalize_(t, walletNames, allowNoWallet) {
   const rentForMonth = str_(t.rentForMonth);
   if (rentForMonth && !/^\d{4}-\d{2}$/.test(rentForMonth)) throw new Error('rentForMonth ต้องเป็น yyyy-MM');
   return {
-    dt: parseDateTime_(t.dateTime), type: type, category: safeText_(category), subCategory: safeText_(t.subCategory),
-    amount: amount, myShare: myShare, wallet: wallet, toWallet: toWallet, note: safeText_(t.note),
+    dt: parseDateTime_(t.dateTime), type: type, category: safeText_(category, MAX_LABEL), subCategory: safeText_(t.subCategory, MAX_LABEL),
+    amount: amount, myShare: myShare, wallet: wallet, toWallet: toWallet, note: safeText_(t.note, MAX_NOTE),
     rentForMonth: rentForMonth
   };
 }
@@ -252,6 +412,24 @@ function sortDesc_(arr) {
 }
 
 function listTransactions_(a) {
+  // ขอหลายเดือนในครั้งเดียว (ใช้ตอนค้นหาย้อนหลัง): อ่านชีตรอบเดียวแล้วแบ่งตามเดือน
+  if (Array.isArray(a.months)) {
+    const months = a.months.map(str_).filter(function (m) { return /^\d{4}-\d{2}$/.test(m); }).slice(0, MAX_MONTHS);
+    const lim = Math.min(Number(a.limit) || 500, 500);
+    const groups = {};
+    months.forEach(function (m) { groups[m] = []; });
+    readTx_().forEach(function (t) {
+      if (t.deleted || !t.dt) return;
+      const m = month_(t.dt);
+      if (groups[m]) groups[m].push(t);
+    });
+    const out = {};
+    months.forEach(function (m) {
+      const sorted = sortDesc_(groups[m]);
+      out[m] = { total: sorted.length, items: sorted.slice(0, lim).map(pub_) };
+    });
+    return { months: out };
+  }
   let list = readTx_();
   if (!a.includeDeleted) list = list.filter(function (t) { return !t.deleted; });
   if (a.month) list = list.filter(function (t) { return t.dt && month_(t.dt) === a.month; });
@@ -307,8 +485,7 @@ function ensureCategory_(type, category) {
   const vals = last < 2 ? [] : sh.getRange(2, 1, last - 1, 2).getValues();
   for (let i = 0; i < vals.length; i++) if (str_(vals[i][0]) === type && str_(vals[i][1]) === category) return;
   const r = last + 1;
-  sh.getRange(r, 1, 1, 3).setValues([[type, category,
-    '=COUNTIFS(Transactions!$C$2:$C$20000,A' + r + ',Transactions!$D$2:$D$20000,B' + r + ')']]);
+  sh.getRange(r, 1, 1, 3).setValues([[type, category, countFormula_(r)]]);
 }
 
 function findRow_(id) {

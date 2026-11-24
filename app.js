@@ -8,7 +8,7 @@
  *  - Polling: ดึงข้อมูลใหม่ทุก 30 วิ ตอนเปิดแอพอยู่ (แก้ใน Google Sheet ตรง ๆ ก็เห็นเอง)
  */
 
-const APP_VERSION = '1.2.1';
+const APP_VERSION = '1.2.2';
 const TYPE_LABEL = { Expense: 'รายจ่าย', Income: 'รายรับ', Transfer: 'โอนย้าย' };
 const TH_MONTHS = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'];
 const TH_DAYS = ['อา.', 'จ.', 'อ.', 'พ.', 'พฤ.', 'ศ.', 'ส.'];
@@ -1445,7 +1445,19 @@ setInterval(() => {
   else updateSync();
 }, 5000);
 window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); S.installEvt = e; if (S.view === 'wallets') render(); });
-if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
+// อัปเดตแอพ: เช็คเวอร์ชันใหม่ทุกครั้งที่กลับมาเปิดแอพ (มือถือมักไม่ได้ปิดแอพจริง แค่พักไว้เบื้องหลัง)
+// พอเวอร์ชันใหม่พร้อม ขึ้นปุ่มให้แตะโหลดใหม่ (ไม่รีโหลดเอง เผื่อกำลังจดอยู่)
+if ('serviceWorker' in navigator && location.protocol === 'https:') {
+  let hadController = !!navigator.serviceWorker.controller;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (hadController) toast('มีเวอร์ชันใหม่ของแอพ', { label: 'โหลดใหม่', fn: () => location.reload() });
+    hadController = true;
+  });
+  navigator.serviceWorker.register('sw.js').then((reg) => {
+    reg.update().catch(() => {});      // เช็คทันทีตอนเปิด (ไม่รอเบราว์เซอร์ ซึ่งอาจเช็คช้าไปหนึ่งรอบ)
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') reg.update().catch(() => {}); });
+  }).catch(() => {});
+}
 
 render();
 updateSync();

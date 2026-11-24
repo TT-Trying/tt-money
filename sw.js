@@ -1,12 +1,19 @@
 // Service worker: เก็บไฟล์หน้าแอพไว้ในเครื่อง เปิดได้แม้ไม่มีเน็ต
 // เวลาแก้โค้ดแล้วอัปโหลดใหม่ ให้เปลี่ยนเลขเวอร์ชันด้านล่าง
-const CACHE = 'ttm-v4';
+const CACHE = 'ttm-v5';
 const FONT_CACHE = 'ttm-fonts';
 const SHELL = ['./', 'index.html', 'style.css', 'app.js', 'manifest.webmanifest',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/icon-maskable-512.png'];
 
+// GitHub Pages สั่งเบราว์เซอร์จำไฟล์ไว้ 10 นาที (Cache-Control: max-age=600)
+// ถ้าโหลดแบบปกติจะได้ไฟล์เก่าที่เบราว์เซอร์จำไว้ เลยต้องบังคับถาม server ทุกครั้ง
+// ('no-cache' = ถาม server ก่อนเสมอ ถ้าไฟล์ไม่เปลี่ยน server ตอบ 304 สั้น ๆ ไม่ต้องโหลดใหม่ทั้งไฟล์)
+const fresh = (url) => fetch(url, { cache: 'no-cache', credentials: 'same-origin' });
+
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
+  e.waitUntil(caches.open(CACHE)
+    .then((c) => Promise.all(SHELL.map((u) => fresh(u).then((res) => { if (!res.ok) throw new Error(u); return c.put(u, res); }))))
+    .then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', (e) => {
@@ -32,7 +39,7 @@ self.addEventListener('fetch', (e) => {
   // ไฟล์ของแอพ: เปิดจากของในเครื่องทันที (เร็ว แม้เน็ตช้า) แล้วโหลดเวอร์ชันใหม่เก็บไว้เบื้องหลัง
   // เวอร์ชันใหม่จะเห็นตอนเปิดแอพครั้งถัดไป
   e.respondWith(caches.open(CACHE).then((c) => c.match(e.request, { ignoreSearch: true }).then((hit) => {
-    const net = fetch(e.request).then((res) => { if (res.ok) c.put(e.request, res.clone()); return res; });
+    const net = fresh(e.request.url).then((res) => { if (res.ok) c.put(e.request, res.clone()); return res; });
     if (hit) { e.waitUntil(net.catch(() => {})); return hit; }
     return net.catch(() => c.match('index.html'));
   })));

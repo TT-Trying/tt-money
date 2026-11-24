@@ -20,15 +20,15 @@
 | `index.html` | โครง HTML (หัวแอพ, 4 view, แท็บล่าง, ปุ่มจด, แผ่นจด, toast) |
 | `style.css` | สีทั้งหมดเป็นตัวแปรใน `:root` มี dark mode ใน `@media (prefers-color-scheme: dark)` |
 | `app.js` | JavaScript ล้วน ไม่มี framework ไม่มี build step (ประมาณ 1,400 บรรทัด) |
-| `sw.js` | service worker: เปิดจาก cache ก่อนแล้วอัปเดตเบื้องหลัง (stale-while-revalidate) |
+| `sw.js` | service worker: เปิดจาก cache ก่อนแล้วอัปเดตเบื้องหลัง (stale-while-revalidate) **ทุก fetch ไปไฟล์ของแอพต้องใช้ `cache: 'no-cache'`** (ฟังก์ชัน `fresh`) เพราะ GitHub Pages ให้เบราว์เซอร์จำไฟล์ 10 นาที ถ้าลืม มือถือจะติดเวอร์ชันเก่า (เคยเกิดแล้วใน 1.2.1) |
 | `manifest.webmanifest`, `icons/` | ติดตั้งเป็นแอพบนมือถือ |
 | `backend/Code.gs` | API บน Google Apps Script ดู `backend/README.md` |
 | `docs/SETUP_GUIDE_TH.md` | คู่มือให้เพื่อนติดตั้งเอง (เขียนให้โหลดไปให้ AI สอนได้) |
 | `tools/build-demo.py`, `tools/demo-prelude.js` | สร้าง `demo.html` ที่ใช้ backend จำลอง ไว้ทดสอบ |
 
 ## กฎที่ต้องทำทุกครั้ง ⚠️
-1. **แก้ไฟล์หน้าแอพเมื่อไหร่ ให้เพิ่มเลข `CACHE` ใน `sw.js`** (เช่น `ttm-v4` → `ttm-v5`) และเพิ่ม `APP_VERSION` ใน `app.js`
-   ไม่งั้นมือถือจะติดเวอร์ชันเก่า (เวอร์ชันใหม่ขึ้นตอนเปิดแอพครั้งที่สองหลัง deploy)
+1. **แก้ไฟล์หน้าแอพเมื่อไหร่ ให้เพิ่มเลข `CACHE` ใน `sw.js`** (เช่น `ttm-v5` → `ttm-v6`) และเพิ่ม `APP_VERSION` ใน `app.js`
+   ไม่งั้นมือถือจะติดเวอร์ชันเก่า หลัง deploy เปิดแอพครั้งแรกจะขึ้นแจ้ง "มีเวอร์ชันใหม่ · โหลดใหม่" (หรือได้เองตอนเปิดครั้งที่สอง)
 2. **ห้ามใส่ความลับใน repo** (repo เป็น public): ห้าม token, Web app URL (`.../exec`), Sheet ID, อีเมล, ภาพหน้าจอ log ที่มี token
    token กับ Sheet ID ฝั่ง backend อยู่ใน Script Properties, ฝั่งแอพอยู่ใน localStorage ของมือถือเท่านั้น
 3. **ห้ามเปลี่ยน API contract โดยไม่แก้ทั้งสองฝั่ง**: ชื่อ action, รูปแบบ `args` และข้อมูลที่ตอบกลับ ถ้าเปลี่ยน ต้องแก้ `backend/Code.gs` + `tools/demo-prelude.js` และบอกเจ้าของว่าต้อง deploy backend ใหม่
@@ -74,6 +74,8 @@ node --check app.js && node --check sw.js
 - `demo.html` ใช้ backend จำลองใน `tools/demo-prelude.js` (ข้อมูลปลอม ตอบช้า ~1 วิ มีปุ่มจำลองเน็ตหลุด)
 - ถ้ามี Playwright: เปิด `demo.html` แล้วทดสอบ flow ที่แก้ ทั้ง light/dark ที่ 390px และดูว่าไม่มี `pageerror`
 - service worker ทดสอบใน `demo.html` ไม่ได้ (เป็นไฟล์เดี่ยว) ต้องเปิดผ่าน `http://localhost` แล้ว register `sw.js` เอง
+  และให้ server ส่ง `Cache-Control: max-age=600` + `ETag` เหมือน GitHub Pages
+  ระวัง: ใน Playwright ถ้ามี `page.route()` อยู่ HTTP cache จะถูกปิด ผลทดสอบเรื่องเวอร์ชันค้างจะผ่านหลอก ๆ
 
 ## ข้อจำกัดที่รู้อยู่แล้ว
 - Apps Script ตอบช้า ~0.5-2 วิต่อคำขอ (เพดานของ Google) ความเร็วที่รู้สึกได้มาจาก optimistic UI และ cache

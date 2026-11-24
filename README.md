@@ -2,6 +2,8 @@
 
 แอพจดรายรับรายจ่ายส่วนตัว เก็บข้อมูลใน Google Sheet ของตัวเอง
 
+> ใช้ AI ช่วยแก้โค้ด (Claude, Antigravity, Codex ฯลฯ)? ให้อ่าน [`AGENTS.md`](AGENTS.md) ก่อนเริ่มงาน
+
 ```
 frontend (โฟลเดอร์หลัก, GitHub Pages)  ──>  backend/ (Google Apps Script)  ──>  Google Sheet
 ```
@@ -18,6 +20,9 @@ frontend (โฟลเดอร์หลัก, GitHub Pages)  ──>  backend/
 โค้ด Apps Script อยู่ที่ [`backend/Code.gs`](backend/Code.gs) วิธีติดตั้งและอัปเดตอยู่ที่ [`backend/README.md`](backend/README.md)
 
 ให้เพื่อนติดตั้งใช้เอง: [`docs/SETUP_GUIDE_TH.md`](docs/SETUP_GUIDE_TH.md) (โหลดไปให้ AI สอนทีละขั้นได้)
+
+## ทดสอบโดยไม่ต้องต่อ Sheet จริง
+`python3 tools/build-demo.py` จะได้ `demo.html` ที่ใช้ข้อมูลปลอม เปิดในเบราว์เซอร์ได้เลย
 
 ## ความลับ
 ไม่มีความลับอยู่ในไฟล์ใน repo นี้ จึงเป็น repo สาธารณะได้

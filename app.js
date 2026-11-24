@@ -8,7 +8,7 @@
  *  - Polling: ดึงข้อมูลใหม่ทุก 30 วิ ตอนเปิดแอพอยู่ (แก้ใน Google Sheet ตรง ๆ ก็เห็นเอง)
  */
 
-const APP_VERSION = '1.2.0';
+const APP_VERSION = '1.2.1';
 const TYPE_LABEL = { Expense: 'รายจ่าย', Income: 'รายรับ', Transfer: 'โอนย้าย' };
 const TH_MONTHS = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'];
 const TH_DAYS = ['อา.', 'จ.', 'อ.', 'พ.', 'พฤ.', 'ศ.', 'ส.'];
@@ -1062,20 +1062,77 @@ function updateAmount(bump) {
   $('#entry-err').hidden = true;
 }
 
-// ไอคอนหมวด เดาจากชื่อ (ไม่เจอใช้ตัวอักษรแรก)
-const CAT_ICONS = [
-  [/กาแฟ|ชา|coffee|cafe|คาเฟ่|ชานม/i, '☕'], [/อาหาร|ข้าว|กิน|ก๋วยเตี๋ยว|food|ขนม|ของกิน|ชาบู|หมูกระทะ/i, '🍜'],
-  [/เดินทาง|grab|bolt|วิน|รถ|bts|mrt|แท็กซี่|taxi|น้ำมัน|ทางด่วน/i, '🚕'], [/ห้อง|เช่า|หอ|บ้าน|rent/i, '🏠'],
-  [/ไฟ|น้ำประปา|ค่าน้ำ|เน็ต|internet|มือถือ|โทรศัพท์|บิล/i, '💡'], [/sub|spotify|netflix|youtube|icloud|สมาชิก/i, '📺'],
-  [/เกม|game|steam|เติมเกม/i, '🎮'], [/ช้อป|shop|ของใช้|เสื้อ|ผ้า|lazada|shopee/i, '🛍️'],
-  [/เรียน|หนังสือ|ค่าเทอม|การศึกษา|study/i, '📚'], [/ยา|หมอ|โรงพยาบาล|สุขภาพ|health/i, '💊'],
-  [/หูฟัง|gadget|อุปกรณ์|ไอที|it|คอม/i, '🎧'], [/ของขวัญ|gift|ทำบุญ|บริจาค/i, '🎁'], [/เที่ยว|travel|ตั๋ว|หนัง|ดูหนัง|บันเทิง/i, '🎬'],
-  [/เงินเดือน|salary|ที่บ้าน|ค่าขนม|พ่อ|แม่/i, '💰'], [/เสริม|ฟรีแลนซ์|freelance|ขาย|งาน/i, '💼'], [/คืน|refund|ดอกเบี้ย|ปันผล/i, '🔁'],
-  [/โอน|transfer/i, '🔄'], [/ออม|เก็บ|saving/i, '🐷']
+// ไอคอนหมวด: ไอคอนเส้นสไตล์เดียวกับแท็บด้านล่าง + สีประจำหมวด (h = hue)
+// เดาจากชื่อหมวด เรียงจากเจาะจงไปกว้าง (ข้อแรกที่ตรงชนะ) ไม่เจอใช้ตัวอักษรแรกของชื่อ
+const ICONS = {
+  food: { h: 22, d: '<path d="M3.5 12h17a8.5 8.5 0 0 1-17 0z"/><path d="M13 9.5 16 3M15.5 9.5 20.5 4.5"/>' },
+  coffee: { h: 30, d: '<path d="M5 9h11v4.5A5.5 5.5 0 0 1 10.5 19h0A5.5 5.5 0 0 1 5 13.5z"/><path d="M16 10.5h1.5a2.5 2.5 0 0 1 0 5H16"/><path d="M8.5 3.5c-.8 1 .8 2 0 3M12.5 3.5c-.8 1 .8 2 0 3"/>' },
+  drink: { h: 15, d: '<path d="M6.5 8h11l-1.3 12.5H7.8z"/><path d="M5.5 8h13M13 8l1.5-5H17"/>' },
+  car: { h: 210, d: '<path d="M5 11l2-5h10l2 5"/><rect x="3" y="11" width="18" height="6" rx="2"/><path d="M6.5 17v2M17.5 17v2"/><circle cx="7.5" cy="14" r=".7" fill="currentColor"/><circle cx="16.5" cy="14" r=".7" fill="currentColor"/>' },
+  home: { h: 265, d: '<path d="M3.5 10.5 12 3.5l8.5 7V19a1.5 1.5 0 0 1-1.5 1.5h-4.5v-6h-5v6H5A1.5 1.5 0 0 1 3.5 19z"/>' },
+  bill: { h: 45, d: '<path d="M13 2.5 5 13.5h6l-1 8 8-11h-6z"/>' },
+  phone: { h: 215, d: '<rect x="7" y="2.5" width="10" height="19" rx="2.5"/><path d="M11 18h2"/>' },
+  sub: { h: 330, d: '<rect x="3" y="4.5" width="18" height="13" rx="2.5"/><path d="M10 8.5v5l4.2-2.5z"/><path d="M8 21h8"/>' },
+  game: { h: 275, d: '<path d="M7 8h10a4 4 0 0 1 4 4v1.5a2.8 2.8 0 0 1-5 1.7L14.8 14H9.2L8 15.2a2.8 2.8 0 0 1-5-1.7V12a4 4 0 0 1 4-4z"/><path d="M8 10.5v3M6.5 12h3"/><circle cx="15.5" cy="11" r=".7" fill="currentColor"/><circle cx="17" cy="13" r=".7" fill="currentColor"/>' },
+  shop: { h: 340, d: '<path d="M5 8h14l-1 12.5H6z"/><path d="M9 10V6.5a3 3 0 0 1 6 0V10"/>' },
+  study: { h: 195, d: '<path d="M5 5.5A1.5 1.5 0 0 1 6.5 4H19v13H6.5A1.5 1.5 0 0 0 5 18.5z"/><path d="M5 18.5A1.5 1.5 0 0 0 6.5 20H19v-3"/><path d="M9 8h6"/>' },
+  health: { h: 0, d: '<rect x="4" y="4" width="16" height="16" rx="4"/><path d="M12 8v8M8 12h8"/>' },
+  gadget: { h: 185, d: '<path d="M4 15v-3a8 8 0 0 1 16 0v3"/><rect x="3" y="14" width="4.5" height="6.5" rx="1.5"/><rect x="16.5" y="14" width="4.5" height="6.5" rx="1.5"/>' },
+  gift: { h: 350, d: '<rect x="4" y="9" width="16" height="11.5" rx="1.5"/><path d="M3 9h18M12 9v11.5"/><path d="M12 9C10 5 6.5 4.5 6.5 7S10 9 12 9c2 0 5.5-.5 5.5-2S14 5 12 9z"/>' },
+  fun: { h: 300, d: '<rect x="3" y="4.5" width="18" height="15" rx="2"/><path d="M7.5 4.5v15M16.5 4.5v15M3 9.5h4.5M3 14.5h4.5M16.5 9.5H21M16.5 14.5H21"/>' },
+  pet: { h: 35, d: '<circle cx="6" cy="10" r="1.8"/><circle cx="9.5" cy="6" r="1.8"/><circle cx="14.5" cy="6" r="1.8"/><circle cx="18" cy="10" r="1.8"/><path d="M12 11c-3 0-5.5 4-5.5 6.5 0 1.5 1.5 2.5 3 2l2.5-.8 2.5.8c1.5.5 3-.5 3-2C17.5 15 15 11 12 11z"/>' },
+  salary: { h: 145, d: '<rect x="2.5" y="6" width="19" height="12" rx="2"/><circle cx="12" cy="12" r="2.6"/><path d="M6 9.5v.01M18 14.5v.01"/>' },
+  work: { h: 160, d: '<rect x="3" y="7" width="18" height="13" rx="2"/><path d="M9 7V5.5A1.5 1.5 0 0 1 10.5 4h3A1.5 1.5 0 0 1 15 5.5V7M3 12.5h18"/>' },
+  refund: { h: 175, d: '<path d="M4 12a8 8 0 1 0 2.4-5.7"/><path d="M4 4v4.5h4.5"/>' },
+  transfer: { h: 225, d: '<path d="M4 8h15l-3.5-3.5M20 16H5l3.5 3.5"/>' },
+  saving: { h: 150, d: '<ellipse cx="12" cy="6" rx="7" ry="2.5"/><path d="M5 6v5.5c0 1.4 3.1 2.5 7 2.5s7-1.1 7-2.5V6"/><path d="M5 11.5V17c0 1.4 3.1 2.5 7 2.5s7-1.1 7-2.5v-5.5"/>' },
+  more: { h: 220, d: '<circle cx="6" cy="12" r="1.3" fill="currentColor"/><circle cx="12" cy="12" r="1.3" fill="currentColor"/><circle cx="18" cy="12" r="1.3" fill="currentColor"/>' },
+  plus: { h: 220, d: '<path d="M12 5v14M5 12h14"/>' }
+};
+const CAT_ICON_RULES = [
+  [/ชาบู|หมูกระทะ|ปิ้งย่าง|บุฟเฟ่ต์/i, 'food'],
+  [/กาแฟ|coffee|cafe|คาเฟ่|ลาเต้|อเมริกาโน่/i, 'coffee'],
+  [/ชานม|ชาไข่มุก|ชาเย็น|เครื่องดื่ม|น้ำปั่น|drink|^ชา/i, 'drink'],
+  [/อาหาร|ข้าว|กิน|ก๋วยเตี๋ยว|food|ขนม|ของกิน|มื้อ/i, 'food'],
+  [/เดินทาง|grab|bolt|วิน|รถ|bts|mrt|แท็กซี่|taxi|น้ำมัน|ทางด่วน/i, 'car'],
+  [/ห้อง|เช่า|หอพัก|บ้าน|rent/i, 'home'],
+  [/มือถือ|โทรศัพท์|ค่าโทร|ซิม|เน็ต|internet|wifi/i, 'phone'],
+  [/ค่าไฟ|ไฟฟ้า|ค่าน้ำ|ประปา|บิล|bill/i, 'bill'],
+  [/subscri|spotify|netflix|youtube|icloud|สมาชิก|premium/i, 'sub'],
+  [/เกม|game|steam/i, 'game'],
+  [/หูฟัง|gadget|อุปกรณ์|ไอที|\bit\b|คอม|มือถือใหม่/i, 'gadget'],
+  [/ช้อป|shop|ของใช้|เสื้อ|ผ้า|lazada|shopee|ของแต่ง/i, 'shop'],
+  [/เรียน|หนังสือ|ค่าเทอม|การศึกษา|study|ติว/i, 'study'],
+  [/ยา|หมอ|โรงพยาบาล|สุขภาพ|health|คลินิก|ฟิตเนส/i, 'health'],
+  [/ของขวัญ|gift|ทำบุญ|บริจาค|ให้เพื่อน/i, 'gift'],
+  [/เที่ยว|travel|ตั๋ว|หนัง|บันเทิง|คอนเสิร์ต/i, 'fun'],
+  [/แมว|หมา|สัตว์|pet/i, 'pet'],
+  [/เงินเดือน|salary|ที่บ้าน|ค่าขนม|พ่อ|แม่/i, 'salary'],
+  [/เสริม|ฟรีแลนซ์|freelance|ขาย|งาน|โบนัส/i, 'work'],
+  [/คืน|refund|ดอกเบี้ย|ปันผล|cashback/i, 'refund'],
+  [/โอน|transfer/i, 'transfer'],
+  [/ออม|เก็บ|saving|ลงทุน/i, 'saving'],
+  [/^อื่น/i, 'more']
 ];
-function catIcon(name) {
-  for (const [re, ic] of CAT_ICONS) if (re.test(name || '')) return ic;
+function catIconKey(name) {
+  for (const [re, key] of CAT_ICON_RULES) if (re.test(name || '')) return key;
   return null;
+}
+function svgIcon(key, size) {
+  const s = size || 22;
+  const span = h('span', { class: 'svg-ic', 'aria-hidden': 'true' });
+  span.innerHTML = `<svg viewBox="0 0 24 24" width="${s}" height="${s}" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${ICONS[key].d}</svg>`;
+  return span;
+}
+// กล่องไอคอนของหมวด: ไอคอน + สี ถ้าไม่รู้จักหมวดใช้ตัวอักษรแรกบนสีที่คำนวณจากชื่อ (หมวดเดิมได้สีเดิมเสมอ)
+function catBadge(name, key) {
+  key = key || catIconKey(name);
+  let hue = key ? ICONS[key].h : 0;
+  if (!key) for (const ch of String(name || '')) hue = (hue * 31 + ch.codePointAt(0)) % 360;
+  const box = h('span', { class: 'ci', style: `--h:${hue}` });
+  if (key) box.append(svgIcon(key));
+  else box.append(h('b', null, (String(name || '?').trim().replace(/^[เแโใไ]+/, '') || '?').slice(0, 1)));   // ข้ามสระหน้า
+  return box;
 }
 
 // วันเวลา: แถบวันให้จิ้ม + ช่วงเวลาสำเร็จรูป แทน datetime picker ของมือถือ
@@ -1196,7 +1253,7 @@ function renderSheet() {
         amount: p.amount ? String(p.amount) : f.amount,
         wallet: p.wallet && walletNames().includes(p.wallet) ? p.wallet : (f.walletTouched ? f.wallet : walletForCategory(p.category, f.wallet))
       }); }
-    }, h('b', null, (catIcon(p.category) ? catIcon(p.category) + ' ' : '') + p.label), h('span', { class: 'num' }, p.amount ? '฿' + money(p.amount) : p.category))))));
+    }, h('b', null, catIconKey(p.category) ? svgIcon(catIconKey(p.category), 16) : null, p.label), h('span', { class: 'num' }, p.amount ? '฿' + money(p.amount) : p.category))))));
   }
 
   if (f.type === 'Transfer') {
@@ -1211,14 +1268,14 @@ function renderSheet() {
     const TOP = 7;   // หมวดเรียงตามที่ใช้บ่อยที่สุด
     let cats = f.showAllCats ? all : all.slice(0, TOP);
     if (!f.showAllCats && f.category && !cats.includes(f.category) && all.includes(f.category)) cats = [...cats, f.category];
-    const tile = (label, icon, pressed, onclick, cls) => h('button', { type: 'button', class: 'cat' + (cls ? ' ' + cls : ''), 'aria-pressed': pressed === null ? null : String(pressed), onclick },
-      h('span', { class: 'ci', 'aria-hidden': 'true' }, icon), h('span', { class: 'cl' }, label));
+    const tile = (label, badge, pressed, onclick, cls) => h('button', { type: 'button', class: 'cat' + (cls ? ' ' + cls : ''), 'aria-pressed': pressed === null ? null : String(pressed), onclick },
+      badge, h('span', { class: 'cl' }, label));
     const grid = h('div', { class: 'cat-grid' },
-      cats.map((c) => tile(c, catIcon(c) || c.slice(0, 1), !f.customCat && c === f.category, () => { buzz(5); set({
+      cats.map((c) => tile(c, catBadge(c), !f.customCat && c === f.category, () => { buzz(5); set({
         category: c, subCategory: f.category === c ? f.subCategory : '', customCat: false,
         wallet: f.walletTouched || f.editId ? f.wallet : walletForCategory(c, f.wallet) }); })),
-      all.length > cats.length ? tile(`อื่น ๆ (${all.length - cats.length})`, '⋯', null, () => set({ showAllCats: true }), 'ghost') : null,
-      tile('หมวดใหม่', '+', !!f.customCat, () => set({ customCat: true, category: '' }), 'ghost'));
+      all.length > cats.length ? tile(`อื่น ๆ (${all.length - cats.length})`, catBadge('', 'more'), null, () => set({ showAllCats: true }), 'ghost') : null,
+      tile('หมวดใหม่', catBadge('', 'plus'), !!f.customCat, () => set({ customCat: true, category: '' }), 'ghost'));
     body.push(section('หมวด', grid,
       f.customCat ? h('input', { class: 'input', type: 'text', placeholder: 'พิมพ์ชื่อหมวดใหม่', value: f.category, oninput: (e) => { f.category = e.target.value; } }) : null));
     body.push(section(f.type === 'Income' ? 'เข้ากระเป๋า' : 'จ่ายจากกระเป๋า',

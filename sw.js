@@ -1,6 +1,6 @@
 // Service worker: เก็บไฟล์หน้าแอพไว้ในเครื่อง เปิดได้แม้ไม่มีเน็ต
 // เวลาแก้โค้ดแล้วอัปโหลดใหม่ ให้เปลี่ยนเลขเวอร์ชันด้านล่าง
-const CACHE = 'ttm-v3';
+const CACHE = 'ttm-v4';
 const FONT_CACHE = 'ttm-fonts';
 const SHELL = ['./', 'index.html', 'style.css', 'app.js', 'manifest.webmanifest',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/icon-maskable-512.png'];

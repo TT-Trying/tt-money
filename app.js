@@ -8,7 +8,7 @@
  *  - Polling: ดึงข้อมูลใหม่ทุก 30 วิ ตอนเปิดแอพอยู่ (แก้ใน Google Sheet ตรง ๆ ก็เห็นเอง)
  */
 
-const APP_VERSION = '1.2.2';
+const APP_VERSION = '1.3.1';
 const TYPE_LABEL = { Expense: 'รายจ่าย', Income: 'รายรับ', Transfer: 'โอนย้าย' };
 const TH_MONTHS = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'];
 const TH_DAYS = ['อา.', 'จ.', 'อ.', 'พ.', 'พฤ.', 'ศ.', 'ส.'];
@@ -54,6 +54,8 @@ const S = {
   tweenPrev: {},
   barPrev: {},
   segPrev: null,
+  tabPrev: -1,
+  sheetFx: null,
   openWallets: new Set(),  // กระเป๋าที่กางอยู่ (คงไว้หลังรีเฟรช)
   drafts: {}               // ค่าที่พิมพ์ค้างในหน้ากระเป๋า (ไม่หายเมื่อหน้ารีเฟรชเอง)
 };
@@ -75,7 +77,8 @@ function h(tag, attrs, ...kids) {
 }
 const pad = (n) => String(n).padStart(2, '0');
 const round2 = (n) => Math.round(n * 100) / 100;
-const money = (n) => Number(n || 0).toLocaleString('th-TH', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+const NF_MONEY = new Intl.NumberFormat('th-TH', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+const money = (n) => NF_MONEY.format(Number(n || 0));
 const normDT = (s) => String(s || '').replace('T', ' ').slice(0, 16);
 const hhmm = (ts) => { const d = new Date(ts); return `${pad(d.getHours())}:${pad(d.getMinutes())}`; };
 function nowLocal() {
@@ -318,46 +321,60 @@ async function flushQueue() {
 const syncNow = (silent) => flushQueue().then(() => refresh(silent));
 
 // ------------------------------------------------------------ toast
-let toastTimer = null;
+let toastTimer = null, toastRaf = 0;
 function toast(msg, action) {
   const t = $('#toast');
-  t.replaceChildren(h('span', null, msg));
+  const warn = /ไม่สำเร็จ|ไม่ได้|ไม่ถูกต้อง|ไม่มีเน็ต|ค้าง|ผิดพลาด/.test(msg);
+  const badge = h('span', { class: 'toast-ic', style: warn ? 'background:var(--amber);color:#111' : null, 'aria-hidden': 'true' });
+  badge.innerHTML = warn
+    ? '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M12 8v5M12 16.5h.01"/></svg>'
+    : '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>';
+  t.replaceChildren(badge, h('span', null, msg));
   if (action) t.append(h('button', { type: 'button', onclick: () => { hideToast(); action.fn(); } }, action.label));
   clearTimeout(toastTimer);
+  cancelAnimationFrame(toastRaf);
   t.hidden = false;
   t.classList.remove('show');
-  void t.offsetWidth;            // ให้ animation เริ่มใหม่
-  t.classList.add('show');
+  if (reduceMotion()) t.classList.add('show');
+  else toastRaf = requestAnimationFrame(() => { toastRaf = requestAnimationFrame(() => t.classList.add('show')); });
   toastTimer = setTimeout(hideToast, action ? 6000 : 3500);
 }
 function hideToast() {
   const t = $('#toast');
+  cancelAnimationFrame(toastRaf);
   t.classList.remove('show');
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { t.hidden = true; }, reduceMotion() ? 0 : 260);
+  toastTimer = setTimeout(() => { t.hidden = true; }, reduceMotion() ? 0 : 250);
 }
 
-// ------------------------------------------------------------ animation helpers
+// ------------------------------------------------------------ animation helpers (ล็อกตาม vsync ลื่นทุก 60/90/120Hz)
+function springEl(el, frames, dur, easing) {
+  if (!el || reduceMotion() || !el.animate) return;
+  try { el.animate(frames, { duration: dur || 280, easing: easing || 'cubic-bezier(.22, 1, .36, 1)' }); } catch (e) { /* ignore */ }
+}
 function tween(el, from, to) {
   if (el._tw) cancelAnimationFrame(el._tw);
   const ints = Number.isInteger(from) && Number.isInteger(to);
-  const t0 = performance.now(), dur = 700;
+  const dur = 500;
+  let t0 = null, prevTxt = el.textContent;
   const step = (now) => {
-    const p = Math.min(1, (now - t0) / dur);
-    const e = 1 - Math.pow(1 - p, 3);
+    if (t0 === null) t0 = now;
+    const p = Math.min(1, Math.max(0, (now - t0) / dur));
+    const e = 1 - Math.pow(1 - p, 4);
     const v = from + (to - from) * e;
-    el.textContent = money(p < 1 && ints ? Math.round(v) : (p < 1 ? round2(v) : to));
+    const txt = money(p < 1 && ints ? Math.round(v) : (p < 1 ? round2(v) : to));
+    if (txt !== prevTxt) { el.textContent = txt; prevTxt = txt; }
     if (p < 1) el._tw = requestAnimationFrame(step);
+    else el._tw = 0;
   };
   el._tw = requestAnimationFrame(step);
 }
 function flash(el, up) {
-  if (!el) return;
+  if (!el || reduceMotion()) return;
   el.classList.remove('flash-up', 'flash-down');
-  void el.offsetWidth;
-  el.classList.add(up ? 'flash-up' : 'flash-down');
+  requestAnimationFrame(() => el.classList.add(up ? 'flash-up' : 'flash-down'));
 }
-// ตัวเลขที่เปลี่ยน: นับขึ้น/ลงให้เห็น, แถบกราฟ: ยืดจากค่าเดิม, รายการใหม่: เลื่อนเข้ามา
+// ตัวเลขที่เปลี่ยน: นับขึ้น/ลงให้เห็น, แถบกราฟ: ยืดด้วย GPU scaleX, รายการใหม่: เลื่อนเข้ามา
 function animateDynamic(root, entering) {
   const rm = reduceMotion();
   root.querySelectorAll('[data-tw]').forEach((el) => {
@@ -369,12 +386,12 @@ function animateDynamic(root, entering) {
     else if (Math.abs(from - to) > 0.004) { tween(el, from, to); flash(el.closest('[data-flash]') || el, to > from); }
   });
   root.querySelectorAll('[data-bar]').forEach((el) => {
-    const k = el.dataset.bar, w = Number(el.dataset.w);
+    const k = el.dataset.bar, w = Math.max(0, Math.min(100, Number(el.dataset.w) || 0));
     const from = entering ? 0 : (S.barPrev[k] !== undefined ? S.barPrev[k] : 0);
     S.barPrev[k] = w;
-    if (rm) { el.style.width = w + '%'; return; }
-    el.style.width = from + '%';
-    requestAnimationFrame(() => requestAnimationFrame(() => { el.style.width = w + '%'; }));
+    if (rm) { el.style.transform = `scaleX(${w / 100})`; return; }
+    el.style.transform = `scaleX(${from / 100})`;
+    requestAnimationFrame(() => requestAnimationFrame(() => { el.style.transform = `scaleX(${w / 100})`; }));
   });
   root.querySelectorAll('[data-txk]').forEach((el) => {
     const k = el.dataset.txk;
@@ -398,6 +415,15 @@ function go(view) {
   if (view === 'list' && !S.month) S.month = curMonth();
   window.scrollTo(0, 0);
   render();
+  const activeSvg = $(`.tab[data-view="${view}"] svg`);
+  if (activeSvg) {
+    const hops = view === 'wallets'
+      ? [{ transform: 'rotate(-10deg) scale(.84)' }, { transform: 'rotate(5deg) translateY(-3px) scale(1.15)', offset: 0.5 }, { transform: 'translateY(-1px) scale(1.05)' }]
+      : view === 'list'
+      ? [{ transform: 'translate3d(-3px, 0, 0) scale(.86)' }, { transform: 'translate3d(2px, -2px, 0) scale(1.13)', offset: 0.5 }, { transform: 'translateY(-1px) scale(1.05)' }]
+      : [{ transform: 'translate3d(0, 3px, 0) scale(.82)' }, { transform: 'translate3d(0, -4px, 0) scale(1.16)', offset: 0.5 }, { transform: 'translateY(-1px) scale(1.05)' }];
+    springEl(activeSvg, hops, 340, 'cubic-bezier(.28, 1.25, .52, 1)');
+  }
   if (view === 'list') loadList(S.month, !!S.lists[S.month]);
 }
 function moveMonth(k) {
@@ -405,6 +431,11 @@ function moveMonth(k) {
   S.navDir = k > 0 ? 'r' : 'l';
   buzz(6);
   render();
+  const title = $('#v-list .month-nav strong');
+  springEl(title, [
+    { opacity: 0, transform: `translate3d(${k > 0 ? 20 : -20}px, 0, 0) scale(.94)` },
+    { opacity: 1, transform: 'translate3d(0, 0, 0) scale(1)' }
+  ], 300);
   loadList(S.month, !!S.lists[S.month]).then(() => {
     const next = shiftMonth(S.month, k);                       // ดึงเดือนถัดไปในทิศเดียวกันรอไว้
     if (!S.lists[next] && next <= curMonth()) loadList(next, true);
@@ -418,7 +449,20 @@ function isEditingMain() {
 function moveTabInk() {
   const i = VIEWS.indexOf(S.view);
   const ink = $('.tab-ink');
-  if (ink) { ink.style.transform = `translateX(${Math.max(0, i) * 100}%)`; ink.style.opacity = i < 0 ? 0 : 1; }
+  if (!ink) return;
+  ink.style.transform = `translate3d(${Math.max(0, i) * 100}%, 0, 0)`;
+  ink.style.opacity = i < 0 ? 0 : 1;
+  if (S.tabPrev >= 0 && i >= 0 && S.tabPrev !== i) {
+    let blob = ink.querySelector('.tab-blob');
+    if (!blob) { blob = h('span', { class: 'tab-blob' }); ink.append(blob); }
+    springEl(blob, [
+      { transform: 'scale3d(1, 1, 1)' },
+      { transform: 'scale3d(1.34, .85, 1)', offset: 0.36 },
+      { transform: 'scale3d(.95, 1.04, 1)', offset: 0.76 },
+      { transform: 'scale3d(1, 1, 1)' }
+    ], 380);
+  }
+  S.tabPrev = i;
 }
 
 function render(opts) {
@@ -454,8 +498,7 @@ function render(opts) {
   else if (cur === 'wallets') renderWallets();
 
   if (entering && !reduceMotion()) {
-    [...el.children].forEach((c, i) => c.style.setProperty('--i', Math.min(i, 8)));
-    void el.offsetWidth;
+    [...el.children].forEach((c, i) => c.style.setProperty('--i', Math.min(i, 7)));
     el.classList.add('enter', 'enter-' + (S.navDir || 'up'));
   }
   if (ready) { S.rendered = sig; S.navDir = 'up'; }
@@ -540,15 +583,19 @@ function renderHome() {
       h('span', { 'data-flash': '' }, 'จ่าย ', tw('exp', Number(sm.expenseTotal || 0), 'big num neg')),
       h('span', { 'data-flash': '' }, 'รับ ', tw('inc', Number(sm.incomeTotal || 0), 'big num pos'))),
     sm.expenseByCategory.length
-      ? h('ul', { class: 'bars' }, sm.expenseByCategory.slice(0, 6).map((c) => h('li', null,
-          h('span', null, c.category), h('span', { class: 'num' }, money(c.amount)),
-          h('span', { class: 'bar', 'aria-hidden': 'true' },
-            h('span', { 'data-bar': 'c:' + c.category, 'data-w': Math.max(2, c.amount / maxCat * 100) })))))
+      ? h('ul', { class: 'bars' }, sm.expenseByCategory.slice(0, 6).map((c) => {
+          const ik = catIconKey(c.category);
+          return h('li', null,
+            h('span', { class: 'bar-cat' }, ik ? svgIcon(ik, 16) : null, c.category),
+            h('span', { class: 'num' }, money(c.amount)),
+            h('span', { class: 'bar', 'aria-hidden': 'true' },
+              h('span', { 'data-bar': 'c:' + c.category, 'data-w': Math.max(2, c.amount / maxCat * 100) })));
+        }))
       : h('p', { class: 'muted' }, 'ยังไม่มีรายจ่ายเดือนนี้')));
 
   els.push(h('section', { class: 'card' }, h('h2', null, 'ล่าสุด'),
     b.recent.length ? h('ul', { class: 'tx-list' }, b.recent.slice(0, 8).map(txItem)) : h('p', { class: 'muted' }, 'ยังไม่มีรายการ กดปุ่ม จด เพื่อเริ่ม'),
-    h('button', { class: 'link', type: 'button', onclick: () => go('list') }, 'ดูทั้งหมด →')));
+    h('button', { class: 'link', type: 'button', onclick: () => go('list') }, 'ดูทั้งหมด', uiIcon('chevR', 15))));
   $('#v-home').replaceChildren(...els);
 }
 
@@ -578,6 +625,15 @@ function dailyBox(ws, avail) {
     h('div', { class: 'd-sub num' }, `จ่ายวันนี้ ${money(spent)} จากงบวันละ ${money(perDay)} · เหลือ ${daysLeft} วันในเดือน`));
 }
 
+function txBadge(t) {
+  const kind = (t.type || '').toLowerCase();
+  const key = t.type === 'Transfer' ? 'transfer' : catIconKey(t.category);
+  const box = h('span', { class: 'tx-ico ' + kind, 'aria-hidden': 'true' });
+  if (key) box.append(svgIcon(key, 17));
+  else box.append(catInitial(t.category));
+  return box;
+}
+
 function txItem(t, opts) {
   const sign = t.type === 'Expense' ? '−' : t.type === 'Income' ? '+' : '';
   const cls = t.type === 'Expense' ? 'neg' : t.type === 'Income' ? 'pos' : '';
@@ -594,15 +650,15 @@ function txItem(t, opts) {
   const busy = t.pending || t.queued;
   const li = h('li', { class: (busy ? 'is-pending' : '') + (opts && opts.del ? ' has-del' : '') || null, 'data-txk': txKey(t) },
     h('button', { class: 'tx', type: 'button', onclick: () => openEntry(t) },
-      h('span', { class: 'tx-dot ' + (t.type || '').toLowerCase(), 'aria-hidden': 'true' }),
+      txBadge(t),
       h('span', { class: 't1' }, title),
       h('span', { class: 'a num ' + cls }, sign + money(t.amount)),
-      h('span', { class: 't2' }, status ? h('span', { class: 'pend' }, status) : null, meta.filter(Boolean).join(', '))));
+      h('span', { class: 't2' }, status ? h('span', { class: 'pend' }, status) : null, meta.filter(Boolean).join(' · '))));
   if (opts && opts.del && !busy && !String(t.id || '').startsWith('tmp-')) li.append(delButton(t, li));
   return li;
 }
 // ปุ่มลบข้างรายการ: กดครั้งแรกเป็น "ลบ?" กดซ้ำภายใน 3 วิถึงจะลบจริง (กันนิ้วลั่น) แล้วยังกดเลิกทำได้อีก
-const TRASH = '<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/></svg>';
+const TRASH = '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4.5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1V7"/></svg>';
 function delButton(t, li) {
   const b = h('button', { type: 'button', class: 'tx-del', 'aria-label': 'ลบรายการ ' + (t.note || t.category || '') });
   b.innerHTML = TRASH;
@@ -617,7 +673,7 @@ function delButton(t, li) {
     }
     clearTimeout(timer);
     li.classList.add('removing');
-    setTimeout(() => deleteTx(t), reduceMotion() ? 0 : 220);
+    setTimeout(() => deleteTx(t), reduceMotion() ? 0 : 200);
   });
   return b;
 }
@@ -649,17 +705,17 @@ function groupByDay(items) {
 function renderList() {
   const el = $('#v-list');
   const head = h('div', { class: 'month-nav' },
-    h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'เดือนก่อน', onclick: () => moveMonth(-1) }, '‹'),
+    h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'เดือนก่อน', onclick: () => moveMonth(-1) }, uiIcon('chevL', 20)),
     h('strong', null, monthLabel(S.month)),
-    h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'เดือนถัดไป', onclick: () => moveMonth(1) }, '›'));
+    h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'เดือนถัดไป', onclick: () => moveMonth(1) }, uiIcon('chevR', 20)));
   const input = h('input', { class: 'search-in', id: 'search', type: 'search', enterkeyhint: 'search', autocomplete: 'off',
     placeholder: 'ค้นหา เช่น grab, กาแฟ, 55', value: S.q || '', 'aria-label': 'ค้นหารายการ' });
-  const clear = h('button', { type: 'button', class: 'search-x', 'aria-label': 'ล้างคำค้น', hidden: !S.q }, '×');
+  const clear = h('button', { type: 'button', class: 'search-x', 'aria-label': 'ล้างคำค้น', hidden: !S.q }, uiIcon('close', 16));
   input.addEventListener('input', () => { S.q = input.value; clear.hidden = !S.q; fillListResults(); });
   input.addEventListener('keydown', (e) => { if (e.key === 'Enter') input.blur(); });
   clear.addEventListener('click', () => { S.q = ''; input.value = ''; clear.hidden = true; fillListResults(); input.focus(); });
   const bar = h('div', { class: 'search' },
-    h('span', { class: 'search-ico', 'aria-hidden': 'true' }, '⌕'), input, clear);
+    h('span', { class: 'search-ico', 'aria-hidden': 'true' }, uiIcon('search', 18)), input, clear);
   el.replaceChildren(head, bar, h('div', { id: 'list-results', class: 'list-results' }));
   return fillListResults();
 }
@@ -681,7 +737,10 @@ function fillListResults() {
     return false;
   }
   const items = S.list.items;
-  if (!items.length) { box.replaceChildren(h('div', { class: 'empty' }, h('div', { class: 'empty-ico' }, '🗒️'), h('p', { class: 'muted' }, 'ไม่มีรายการในเดือนนี้'))); return true; }
+  if (!items.length) {
+    box.replaceChildren(h('div', { class: 'empty' }, h('div', { class: 'empty-ico' }, uiIcon('ledger', 22)), h('p', { class: 'muted' }, 'ไม่มีรายการในเดือนนี้')));
+    return true;
+  }
   const exp = round2(items.filter((t) => t.type === 'Expense').reduce((s, t) => s + share(t), 0));
   box.replaceChildren(
     h('p', { class: 'muted list-sum' }, `${items.length} รายการ · รายจ่ายรวม `, h('b', { class: 'num neg' }, tw('lexp:' + S.month, exp))),
@@ -712,7 +771,7 @@ function fillSearch(box, words) {
       inc ? h('span', null, 'รับรวม ', h('b', { class: 'pos' }, money(inc))) : null) : null);
   const shown = items.slice(0, 200);
   box.replaceChildren(scope, summary,
-    ...(items.length ? groupByDay(shown) : [h('div', { class: 'empty' }, h('div', { class: 'empty-ico' }, '🔍'),
+    ...(items.length ? groupByDay(shown) : [h('div', { class: 'empty' }, h('div', { class: 'empty-ico' }, uiIcon('search', 22)),
       h('p', { class: 'muted' }, scopeAll ? 'ไม่เจอรายการที่ตรงกัน' : 'ไม่เจอในเดือนนี้ ลองกด "ย้อนหลัง 12 เดือน"'))]),
     items.length > shown.length ? h('p', { class: 'muted' }, `แสดง 200 รายการล่าสุด พิมพ์คำค้นให้เจาะจงขึ้นเพื่อดูที่เหลือ`) : null);
   return true;
@@ -805,15 +864,26 @@ function renderWallets() {
         ? h('p', { class: 'hint' }, w.difference < 0 ? 'เงินจริงน้อยกว่าในระบบ อาจมีรายจ่ายที่ลืมจด' : 'เงินจริงมากกว่าในระบบ อาจมีรายรับที่ลืมจด หรือจดรายจ่ายเกิน')
         : null,
       h('div', { class: 'row' }, h('div', { class: 'field' }, h('span', { class: 'lbl' }, 'ชื่อกระเป๋า'), newName), renBtn));
-    return h('details', { class: 'wallet', open: S.openWallets.has(w.name),
+    const sum = h('summary', { 'data-flash': '' }, h('span', { class: 'name' }, w.name), diff,
+      tw('ww:' + w.name, Number(w.balance || 0), 'num' + (w.balance < 0 ? ' neg' : '')),
+      h('span', { class: 'chev', 'aria-hidden': 'true' }, uiIcon('chevR', 17)));
+    const det = h('details', { class: 'wallet', open: S.openWallets.has(w.name),
       ontoggle: (e) => {
-        if (e.target.open) { S.openWallets.add(w.name); if (!reduceMotion()) { body.classList.remove('opening'); void body.offsetWidth; body.classList.add('opening'); } }
-        else S.openWallets.delete(w.name);
-      } },
-      h('summary', { 'data-flash': '' }, h('span', { class: 'name' }, w.name), diff,
-        tw('ww:' + w.name, Number(w.balance || 0), 'num' + (w.balance < 0 ? ' neg' : '')),
-        h('span', { class: 'chev', 'aria-hidden': 'true' }, '›')),
-      body);
+        if (e.target.open) {
+          S.openWallets.add(w.name);
+          if (!reduceMotion()) { body.classList.remove('opening'); requestAnimationFrame(() => body.classList.add('opening')); }
+        } else S.openWallets.delete(w.name);
+      } }, sum, body);
+    sum.addEventListener('click', (e) => {
+      if (!det.open || reduceMotion() || det.classList.contains('closing')) return;
+      e.preventDefault();
+      buzz(5);
+      det.classList.add('closing');
+      const ch = sum.querySelector('.chev');
+      if (ch) ch.style.transform = 'rotate(0deg)';
+      setTimeout(() => { det.open = false; det.classList.remove('closing'); if (ch) ch.style.transform = ''; }, 175);
+    });
+    return det;
   });
 
   const addName = dIn('add:name', { class: 'input', type: 'text', maxlength: '30', placeholder: 'เช่น SCB' }, '');
@@ -850,19 +920,31 @@ function walletForCategory(cat, fallback) {
   return map[cat] && walletNames().includes(map[cat]) ? map[cat] : fallback;
 }
 
-let sheetTimer = null;
+let sheetTimer = null, sheetOpenTimer = null;
 const sheetOpen = () => !$('#sheet').hidden && !$('#sheet').classList.contains('closing');
 function showSheet() {
   const s = $('#sheet');
-  clearTimeout(sheetTimer);
-  s.classList.remove('closing');
+  clearTimeout(sheetTimer); clearTimeout(sheetOpenTimer);
+  s.style.transform = '';
+  $('#main').style.transform = ''; $('#main').style.opacity = '';
+  s.classList.remove('closing', 'dragging', 'snap-back');
   s.hidden = false;
   document.body.style.overflow = 'hidden';
+  document.body.classList.add('sheet-open');
+  if (!reduceMotion()) {
+    s.classList.add('opening');
+    sheetOpenTimer = setTimeout(() => s.classList.remove('opening'), 480);
+  }
 }
 function closeSheet() {
   const s = $('#sheet');
   if (s.hidden) return;
+  clearTimeout(sheetOpenTimer);
   document.body.style.overflow = '';
+  document.body.classList.remove('sheet-open');
+  $('#main').style.transform = ''; $('#main').style.opacity = '';
+  s.style.transform = '';
+  s.classList.remove('dragging', 'snap-back', 'opening');
   if (reduceMotion()) { s.hidden = true; return; }
   s.classList.add('closing');
   clearTimeout(sheetTimer);
@@ -939,7 +1021,16 @@ function showEntryError(msg) {
   if (!el) return;
   el.textContent = msg; el.hidden = false;
   const d = $('#amount-display');
-  if (d && !reduceMotion()) { d.classList.remove('shake'); void d.offsetWidth; d.classList.add('shake'); }
+  if (d && !reduceMotion() && d.animate) {
+    d.animate([
+      { transform: 'translate3d(0, 0, 0)' },
+      { transform: 'translate3d(-7px, 0, 0)', offset: 0.2 },
+      { transform: 'translate3d(7px, 0, 0)', offset: 0.4 },
+      { transform: 'translate3d(-5px, 0, 0)', offset: 0.65 },
+      { transform: 'translate3d(4px, 0, 0)', offset: 0.85 },
+      { transform: 'translate3d(0, 0, 0)' }
+    ], { duration: 340, easing: 'ease-out' });
+  }
   buzz([10, 40, 10]);
 }
 function reopenWithError(saved, msg) {
@@ -1034,18 +1125,22 @@ async function deleteTx(tx) {
 
 function keyPress(k) {
   const f = S.form;
-  let a = f.amount;
+  const prev = f.amount;
+  let a = prev;
   if (k === 'del') a = a.slice(0, -1);
   else if (k === '.') { if (!a.includes('.')) a = (a || '0') + '.'; }
   else {
-    if (a.includes('.') && a.split('.')[1].length >= 2) return;
+    if (a.includes('.') && a.split('.')[1].length >= 2) { showEntryError('ใส่ทศนิยมได้สูงสุด 2 ตำแหน่ง'); return; }
     if (a.replace('.', '').length >= 9) return;
     a = a === '0' ? k : a + k;
   }
+  if (a === prev) return;
+  buzz(4);
   f.amount = a;
-  updateAmount(true);
+  updateAmount(k === 'del' ? 'del' : 'add', !prev && !!a);
 }
-function updateAmount(bump) {
+const NF_INT = new Intl.NumberFormat('th-TH', { maximumFractionDigits: 0 });
+function updateAmount(mode, woke) {
   const d = $('#amount-display');
   if (!d) return;
   const a = S.form.amount;
@@ -1053,41 +1148,97 @@ function updateAmount(bump) {
   let shown = '0';
   if (a) {
     const [i, dec] = a.split('.');
-    shown = Number(i || 0).toLocaleString('th-TH') + (a.includes('.') ? '.' + (dec || '') : '');
+    shown = NF_INT.format(Number(i || 0)) + (a.includes('.') ? '.' + (dec || '') : '');
   }
-  d.replaceChildren(h('small', null, '฿'), h('span', { class: 'amt' }, shown));
-  if (bump && !reduceMotion()) { d.classList.remove('bump', 'shake'); void d.offsetWidth; d.classList.add('bump'); }
+  const curSym = h('small', null, '฿');
+  let amtEl;
+  const rm = reduceMotion();
+  if (!rm && mode === 'add' && shown.length >= 1) {
+    const head = shown.slice(0, -1), tail = h('span', { class: 'amt-ch' }, shown.slice(-1));
+    amtEl = h('span', { class: 'amt' }, head, tail);
+    d.replaceChildren(curSym, amtEl);
+    springEl(tail, [
+      { opacity: 0, transform: 'translate3d(0, 62%, 0) scale(.66)' },
+      { opacity: 1, transform: 'translate3d(0, -4%, 0) scale(1.06)', offset: 0.62 },
+      { opacity: 1, transform: 'translate3d(0, 0, 0) scale(1)' }
+    ], 210, 'cubic-bezier(.28, 1.28, .52, 1)');
+    if (head) springEl(amtEl, [{ transform: 'translate3d(5px, 0, 0)' }, { transform: 'translate3d(0, 0, 0)' }], 165);
+    if (woke) springEl(curSym, [{ transform: 'scale(.78) rotate(-8deg)' }, { transform: 'scale(1.12) rotate(2deg)', offset: 0.55 }, { transform: 'scale(1)' }], 260);
+  } else if (!rm && mode === 'preset' && a) {
+    const chars = [...shown].map((ch) => h('span', { class: 'amt-ch' }, ch));
+    amtEl = h('span', { class: 'amt' }, chars);
+    d.replaceChildren(curSym, amtEl);
+    chars.forEach((el, i) => {
+      if (el.animate) el.animate([
+        { opacity: 0, transform: 'translate3d(0, 68%, 0) scale(.7)' },
+        { opacity: 1, transform: 'translate3d(0, -5%, 0) scale(1.05)', offset: 0.65 },
+        { opacity: 1, transform: 'translate3d(0, 0, 0) scale(1)' }
+      ], { duration: 240, delay: i * 24, easing: 'cubic-bezier(.28, 1.28, .52, 1)', fill: 'backwards' });
+    });
+    springEl(curSym, [{ transform: 'scale(.82)' }, { transform: 'scale(1.1)', offset: 0.5 }, { transform: 'scale(1)' }], 240);
+  } else {
+    amtEl = h('span', { class: 'amt' }, shown);
+    d.replaceChildren(curSym, amtEl);
+    if (mode === 'del') {
+      springEl(amtEl, [
+        { transform: 'translate3d(-6px, 0, 0) scale(.965)' },
+        { transform: 'translate3d(0, 0, 0) scale(1)' }
+      ], 175);
+    }
+  }
   const save = $('#entry-save');
-  if (save) save.replaceChildren(...[h('span', null, 'บันทึก'), Number(a) > 0 ? h('small', { class: 'num' }, '฿' + shown) : null].filter(Boolean));
+  if (save) {
+    save.replaceChildren(...[h('span', null, 'บันทึก'), Number(a) > 0 ? h('small', { class: 'num' }, '฿' + shown) : null].filter(Boolean));
+    if (woke || mode === 'preset') {
+      springEl(save, [{ transform: 'scale(.95)' }, { transform: 'scale(1.03)', offset: 0.5 }, { transform: 'scale(1)' }], 250);
+    }
+  }
   $('#entry-err').hidden = true;
 }
 
-// ไอคอนหมวด: ไอคอนเส้นสไตล์เดียวกับแท็บด้านล่าง + สีประจำหมวด (h = hue)
-// เดาจากชื่อหมวด เรียงจากเจาะจงไปกว้าง (ข้อแรกที่ตรงชนะ) ไม่เจอใช้ตัวอักษรแรกของชื่อ
+// ------------------------------------------------------------ ไอคอนระบบ & หมวดหมู่ (เส้นคมน้ำหนักสม่ำเสมอ ไม่ใช้อีโมจิ)
+const UI_ICONS = {
+  chevL: '<path d="m14.5 6-6 6 6 6"/>',
+  chevR: '<path d="m9.5 6 6 6-6 6"/>',
+  chevD: '<path d="m6 9.5 6 6 6-6"/>',
+  close: '<path d="M18 6 6 18M6 6l12 12"/>',
+  search: '<circle cx="11" cy="11" r="6.5"/><path d="m20 20-3.8-3.8"/>',
+  clock: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 1.8"/>',
+  calendar: '<rect x="3.5" y="5" width="17" height="15.5" rx="2.5"/><path d="M8 3.5v3M16 3.5v3M3.5 9.5h17"/>',
+  backspace: '<path d="M20 6H9.2a2 2 0 0 0-1.5.7L3.5 12l4.2 5.3a2 2 0 0 0 1.5.7H20a1.5 1.5 0 0 0 1.5-1.5v-9A1.5 1.5 0 0 0 20 6z"/><path d="m15.5 9.5-5 5m0-5 5 5"/>',
+  ledger: '<rect x="4.5" y="3.5" width="15" height="17" rx="2.5"/><path d="M8.5 8.5h7M8.5 12.5h7M8.5 16.5h4.5"/>'
+};
+function uiIcon(name, size) {
+  const s = size || 18;
+  const span = h('span', { class: 'svg-ic', 'aria-hidden': 'true' });
+  span.innerHTML = `<svg viewBox="0 0 24 24" width="${s}" height="${s}" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round">${UI_ICONS[name]}</svg>`;
+  return span;
+}
+
 const ICONS = {
-  food: { h: 22, d: '<path d="M3.5 12h17a8.5 8.5 0 0 1-17 0z"/><path d="M13 9.5 16 3M15.5 9.5 20.5 4.5"/>' },
-  coffee: { h: 30, d: '<path d="M5 9h11v4.5A5.5 5.5 0 0 1 10.5 19h0A5.5 5.5 0 0 1 5 13.5z"/><path d="M16 10.5h1.5a2.5 2.5 0 0 1 0 5H16"/><path d="M8.5 3.5c-.8 1 .8 2 0 3M12.5 3.5c-.8 1 .8 2 0 3"/>' },
-  drink: { h: 15, d: '<path d="M6.5 8h11l-1.3 12.5H7.8z"/><path d="M5.5 8h13M13 8l1.5-5H17"/>' },
-  car: { h: 210, d: '<path d="M5 11l2-5h10l2 5"/><rect x="3" y="11" width="18" height="6" rx="2"/><path d="M6.5 17v2M17.5 17v2"/><circle cx="7.5" cy="14" r=".7" fill="currentColor"/><circle cx="16.5" cy="14" r=".7" fill="currentColor"/>' },
-  home: { h: 265, d: '<path d="M3.5 10.5 12 3.5l8.5 7V19a1.5 1.5 0 0 1-1.5 1.5h-4.5v-6h-5v6H5A1.5 1.5 0 0 1 3.5 19z"/>' },
-  bill: { h: 45, d: '<path d="M13 2.5 5 13.5h6l-1 8 8-11h-6z"/>' },
-  phone: { h: 215, d: '<rect x="7" y="2.5" width="10" height="19" rx="2.5"/><path d="M11 18h2"/>' },
-  sub: { h: 330, d: '<rect x="3" y="4.5" width="18" height="13" rx="2.5"/><path d="M10 8.5v5l4.2-2.5z"/><path d="M8 21h8"/>' },
-  game: { h: 275, d: '<path d="M7 8h10a4 4 0 0 1 4 4v1.5a2.8 2.8 0 0 1-5 1.7L14.8 14H9.2L8 15.2a2.8 2.8 0 0 1-5-1.7V12a4 4 0 0 1 4-4z"/><path d="M8 10.5v3M6.5 12h3"/><circle cx="15.5" cy="11" r=".7" fill="currentColor"/><circle cx="17" cy="13" r=".7" fill="currentColor"/>' },
-  shop: { h: 340, d: '<path d="M5 8h14l-1 12.5H6z"/><path d="M9 10V6.5a3 3 0 0 1 6 0V10"/>' },
-  study: { h: 195, d: '<path d="M5 5.5A1.5 1.5 0 0 1 6.5 4H19v13H6.5A1.5 1.5 0 0 0 5 18.5z"/><path d="M5 18.5A1.5 1.5 0 0 0 6.5 20H19v-3"/><path d="M9 8h6"/>' },
-  health: { h: 0, d: '<rect x="4" y="4" width="16" height="16" rx="4"/><path d="M12 8v8M8 12h8"/>' },
-  gadget: { h: 185, d: '<path d="M4 15v-3a8 8 0 0 1 16 0v3"/><rect x="3" y="14" width="4.5" height="6.5" rx="1.5"/><rect x="16.5" y="14" width="4.5" height="6.5" rx="1.5"/>' },
-  gift: { h: 350, d: '<rect x="4" y="9" width="16" height="11.5" rx="1.5"/><path d="M3 9h18M12 9v11.5"/><path d="M12 9C10 5 6.5 4.5 6.5 7S10 9 12 9c2 0 5.5-.5 5.5-2S14 5 12 9z"/>' },
-  fun: { h: 300, d: '<rect x="3" y="4.5" width="18" height="15" rx="2"/><path d="M7.5 4.5v15M16.5 4.5v15M3 9.5h4.5M3 14.5h4.5M16.5 9.5H21M16.5 14.5H21"/>' },
-  pet: { h: 35, d: '<circle cx="6" cy="10" r="1.8"/><circle cx="9.5" cy="6" r="1.8"/><circle cx="14.5" cy="6" r="1.8"/><circle cx="18" cy="10" r="1.8"/><path d="M12 11c-3 0-5.5 4-5.5 6.5 0 1.5 1.5 2.5 3 2l2.5-.8 2.5.8c1.5.5 3-.5 3-2C17.5 15 15 11 12 11z"/>' },
-  salary: { h: 145, d: '<rect x="2.5" y="6" width="19" height="12" rx="2"/><circle cx="12" cy="12" r="2.6"/><path d="M6 9.5v.01M18 14.5v.01"/>' },
-  work: { h: 160, d: '<rect x="3" y="7" width="18" height="13" rx="2"/><path d="M9 7V5.5A1.5 1.5 0 0 1 10.5 4h3A1.5 1.5 0 0 1 15 5.5V7M3 12.5h18"/>' },
-  refund: { h: 175, d: '<path d="M4 12a8 8 0 1 0 2.4-5.7"/><path d="M4 4v4.5h4.5"/>' },
-  transfer: { h: 225, d: '<path d="M4 8h15l-3.5-3.5M20 16H5l3.5 3.5"/>' },
-  saving: { h: 150, d: '<ellipse cx="12" cy="6" rx="7" ry="2.5"/><path d="M5 6v5.5c0 1.4 3.1 2.5 7 2.5s7-1.1 7-2.5V6"/><path d="M5 11.5V17c0 1.4 3.1 2.5 7 2.5s7-1.1 7-2.5v-5.5"/>' },
-  more: { h: 220, d: '<circle cx="6" cy="12" r="1.3" fill="currentColor"/><circle cx="12" cy="12" r="1.3" fill="currentColor"/><circle cx="18" cy="12" r="1.3" fill="currentColor"/>' },
-  plus: { h: 220, d: '<path d="M12 5v14M5 12h14"/>' }
+  food: { h: 22, d: '<path d="M4 12.5h16a8 8 0 0 1-16 0z"/><path d="M3 12.5h18M9 20.5h6"/><path d="M9.5 8.5c0-1.5 1.2-2.2 1.2-3.5M13.5 8.5c0-1.5 1.2-2.2 1.2-3.5"/>' },
+  coffee: { h: 30, d: '<path d="M5 9h11v4.5a5.5 5.5 0 0 1-11 0z"/><path d="M16 10h1.8a2.5 2.5 0 0 1 0 5H16"/><path d="M4.5 19.5h12"/><path d="M8.5 5v1.8M12.5 5v1.8"/>' },
+  drink: { h: 15, d: '<path d="M7 8.5h10l-1.2 11a1.5 1.5 0 0 1-1.5 1.3H9.7a1.5 1.5 0 0 1-1.5-1.3z"/><path d="M5.5 8.5h13M12.5 8.5 14 3.5h2.5"/>' },
+  car: { h: 210, d: '<path d="M5.5 11 7.3 6.3a1.8 1.8 0 0 1 1.7-1.1h6a1.8 1.8 0 0 1 1.7 1.1L18.5 11"/><rect x="3.5" y="11" width="17" height="6" rx="2"/><path d="M6 17v2.2M18 17v2.2"/><circle cx="7.5" cy="14" r=".9" fill="currentColor" stroke="none"/><circle cx="16.5" cy="14" r=".9" fill="currentColor" stroke="none"/>' },
+  home: { h: 265, d: '<path d="M3.5 10.5 12 3.8l8.5 6.7V19a1.5 1.5 0 0 1-1.5 1.5h-4.5v-5.5h-5v5.5H5A1.5 1.5 0 0 1 3.5 19z"/>' },
+  bill: { h: 45, d: '<path d="M13 3 5.5 13.5h5.8L10.5 21 18 10.5h-5.8z"/>' },
+  phone: { h: 215, d: '<rect x="6.5" y="3" width="11" height="18" rx="2.5"/><path d="M11 17.8h2"/>' },
+  sub: { h: 330, d: '<rect x="3.5" y="5" width="17" height="12" rx="2.5"/><path d="m10.5 8.8 4.2 2.2-4.2 2.2z"/><path d="M8.5 20h7"/>' },
+  game: { h: 275, d: '<rect x="3" y="7.5" width="18" height="10" rx="4.5"/><path d="M8 10.5v4M6 12.5h4"/><circle cx="15.2" cy="11.3" r=".9" fill="currentColor" stroke="none"/><circle cx="17.2" cy="13.3" r=".9" fill="currentColor" stroke="none"/>' },
+  shop: { h: 340, d: '<path d="M5.5 8.5h13l-1 11a1.5 1.5 0 0 1-1.5 1.3H8a1.5 1.5 0 0 1-1.5-1.3z"/><path d="M9 8.5V6.8a3 3 0 0 1 6 0v1.7"/>' },
+  study: { h: 195, d: '<path d="M4.5 5.5A2 2 0 0 1 6.5 3.5H19v15H6.5a2 2 0 0 0-2 2z"/><path d="M4.5 18.5A2 2 0 0 1 6.5 16.5H19"/><path d="M8.5 8h6.5"/>' },
+  health: { h: 0, d: '<path d="M12 20s-7-4.4-7-10a4.2 4.2 0 0 1 7-3.1A4.2 4.2 0 0 1 19 10c0 5.6-7 10-7 10z"/><path d="M12 9.5v4M10 11.5h4"/>' },
+  gadget: { h: 185, d: '<path d="M4.5 14.5V12a7.5 7.5 0 0 1 15 0v2.5"/><rect x="3.5" y="13.5" width="4" height="6" rx="1.8"/><rect x="16.5" y="13.5" width="4" height="6" rx="1.8"/>' },
+  gift: { h: 350, d: '<rect x="4.5" y="9.5" width="15" height="10.5" rx="1.8"/><path d="M3.5 9.5h17M12 9.5V20"/><path d="M12 9.5c-1.8-3.5-5-3.8-5-1.6S10 9.5 12 9.5c2 0 5 .8 5-1.6s-3.2-1.9-5 1.6z"/>' },
+  fun: { h: 300, d: '<path d="M4 8.5a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v2a2 2 0 0 0 0 3v2a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-2a2 2 0 0 0 0-3z"/><path d="M9.5 6.5v11" stroke-dasharray="2 2.5"/>' },
+  pet: { h: 35, d: '<circle cx="6.5" cy="10" r="1.6"/><circle cx="10" cy="6.5" r="1.6"/><circle cx="14" cy="6.5" r="1.6"/><circle cx="17.5" cy="10" r="1.6"/><path d="M12 11.5c-2.8 0-5 3.3-5 5.6 0 1.4 1.3 2.3 2.8 1.9l2.2-.6 2.2.6c1.5.4 2.8-.5 2.8-1.9 0-2.3-2.2-5.6-5-5.6z"/>' },
+  salary: { h: 145, d: '<rect x="3" y="6" width="18" height="12" rx="2.2"/><circle cx="12" cy="12" r="2.6"/><path d="M6.5 9.5h.01M17.5 14.5h.01"/>' },
+  work: { h: 160, d: '<rect x="3.5" y="7" width="17" height="12.5" rx="2.2"/><path d="M9 7V5.4A1.4 1.4 0 0 1 10.4 4h3.2A1.4 1.4 0 0 1 15 5.4V7M3.5 12.2h17"/>' },
+  refund: { h: 175, d: '<path d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3L4.5 9"/><path d="M4.5 4.5V9H9"/>' },
+  transfer: { h: 225, d: '<path d="M4.5 8.5h15l-3.5-3.5M19.5 15.5h-15L8 19"/>' },
+  saving: { h: 150, d: '<ellipse cx="12" cy="6.5" rx="6.8" ry="2.5"/><path d="M5.2 6.5v5.2c0 1.4 3 2.5 6.8 2.5s6.8-1.1 6.8-2.5V6.5"/><path d="M5.2 11.7V17c0 1.4 3 2.5 6.8 2.5s6.8-1.1 6.8-2.5v-5.3"/>' },
+  more: { h: 220, d: '<circle cx="6.5" cy="12" r="1.3" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.3" fill="currentColor" stroke="none"/><circle cx="17.5" cy="12" r="1.3" fill="currentColor" stroke="none"/>' },
+  plus: { h: 220, d: '<path d="M12 5.5v13M5.5 12h13"/>' }
 };
 const CAT_ICON_RULES = [
   [/ชาบู|หมูกระทะ|ปิ้งย่าง|บุฟเฟ่ต์/i, 'food'],
@@ -1118,20 +1269,21 @@ function catIconKey(name) {
   for (const [re, key] of CAT_ICON_RULES) if (re.test(name || '')) return key;
   return null;
 }
+function catInitial(name) {
+  return (String(name || '?').trim().replace(/^[เแโใไ]+/, '') || '?').slice(0, 1);   // ข้ามสระหน้า
+}
 function svgIcon(key, size) {
-  const s = size || 22;
+  const s = size || 18;
   const span = h('span', { class: 'svg-ic', 'aria-hidden': 'true' });
   span.innerHTML = `<svg viewBox="0 0 24 24" width="${s}" height="${s}" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${ICONS[key].d}</svg>`;
   return span;
 }
-// กล่องไอคอนของหมวด: ไอคอน + สี ถ้าไม่รู้จักหมวดใช้ตัวอักษรแรกบนสีที่คำนวณจากชื่อ (หมวดเดิมได้สีเดิมเสมอ)
-function catBadge(name, key) {
+// ไอคอนกะทัดรัดบนป้ายเลือกหมวดในแผ่นจด: เส้นหมึกเรียบคม ไม่ใช้สีรุ้งพาสเทล
+function catPillIcon(name, key) {
   key = key || catIconKey(name);
-  let hue = key ? ICONS[key].h : 0;
-  if (!key) for (const ch of String(name || '')) hue = (hue * 31 + ch.codePointAt(0)) % 360;
-  const box = h('span', { class: 'ci', style: `--h:${hue}` });
-  if (key) box.append(svgIcon(key));
-  else box.append(h('b', null, (String(name || '?').trim().replace(/^[เแโใไ]+/, '') || '?').slice(0, 1)));   // ข้ามสระหน้า
+  const box = h('span', { class: 'ci-s', 'aria-hidden': 'true' });
+  if (key) box.append(svgIcon(key, 16));
+  else box.append(h('b', null, catInitial(name)));
   return box;
 }
 
@@ -1160,7 +1312,7 @@ function whenPanel(f, set) {
     const ymd = ymdOf(x);
     const i = Math.round((new Date(today.getFullYear(), today.getMonth(), today.getDate()) - new Date(x.getFullYear(), x.getMonth(), x.getDate())) / 864e5);
     return h('button', { type: 'button', class: 'day-chip', 'aria-pressed': String(ymd === d),
-      onclick: () => set({ dateTime: ymd + 'T' + (f.timeNow && i !== 0 ? '12:00' : f.dateTime.slice(11, 16)), timeNow: f.timeNow && i === 0 }) },
+      onclick: () => set({ dateTime: ymd + 'T' + (f.timeNow && i !== 0 ? '12:00' : f.dateTime.slice(11, 16)), timeNow: f.timeNow && i === 0 }, true, { day: ymd }) },
       h('span', { class: 'dw' }, i === 0 ? 'วันนี้' : i === 1 ? 'เมื่อวาน' : TH_DAYS[x.getDay()]),
       h('b', { class: 'num' }, x.getDate()),
       h('span', { class: 'dm' }, TH_MONTHS[x.getMonth()]));
@@ -1172,7 +1324,7 @@ function whenPanel(f, set) {
   }
   const other = h('input', { type: 'date', class: 'sr-date', 'aria-label': 'เลือกวันอื่น', max: ymdOf(today), value: d,
     onchange: (e) => { if (e.target.value) set({ dateTime: e.target.value + 'T' + f.dateTime.slice(11, 16), timeNow: false }); } });
-  strip.append(h('label', { class: 'day-chip other' }, h('span', { class: 'dw' }, 'วันอื่น'), h('b', null, '📅'), h('span', { class: 'dm' }, 'ปฏิทิน'), other));
+  strip.append(h('label', { class: 'day-chip other' }, h('span', { class: 'dw' }, 'วันอื่น'), h('b', null, uiIcon('calendar', 18)), h('span', { class: 'dm' }, 'ปฏิทิน'), other));
   other.addEventListener('click', () => { try { other.showPicker(); } catch (e) { /* บาง browser เปิดเอง */ } });
 
   const isToday = d === ymdOf(today);
@@ -1190,7 +1342,7 @@ function whenPanel(f, set) {
     const mm = Math.min(59, Math.max(0, parseInt(mIn.value, 10) || 0));
     f.dateTime = d + 'T' + pad(hh) + ':' + pad(mm);
     f.timeNow = false;
-    const pill = $('.when-pill span:nth-child(2)');
+    const pill = $('.when-pill .when-txt');
     if (pill) pill.textContent = whenLabel(f);
   };
   for (const inp of [hIn, mIn]) {
@@ -1220,67 +1372,105 @@ function whenPanel(f, set) {
 
 function renderSheet() {
   const f = S.form;
-  const set = (patch, rerender = true) => { Object.assign(f, patch); if (rerender) { const y = $('.sheet-scroll') ? $('.sheet-scroll').scrollTop : 0; renderSheet(); $('.sheet-scroll').scrollTop = y; } };
+  const fx = S.sheetFx || {};
+  S.sheetFx = null;
+  const set = (patch, rerender = true, anim) => {
+    Object.assign(f, patch);
+    if (rerender) {
+      S.sheetFx = anim || null;
+      const y = $('.sheet-scroll') ? $('.sheet-scroll').scrollTop : 0;
+      renderSheet();
+      $('.sheet-scroll').scrollTop = y;
+    }
+  };
   const types = ['Expense', 'Income', 'Transfer'];
   const idx = types.indexOf(f.type);
+  const segBlob = h('span', { class: 'seg-blob' });
+  const segThumb = h('span', { class: 'seg-thumb', 'aria-hidden': 'true' }, segBlob);
   const seg = h('div', { class: 'seg', role: 'group', 'aria-label': 'ชนิดรายการ', 'data-type': f.type },
-    h('span', { class: 'seg-thumb', 'aria-hidden': 'true' }),
+    segThumb,
     types.map((t) => h('button', {
       type: 'button', 'aria-pressed': String(f.type === t), disabled: f.editId && f.legacy ? true : null,
-      onclick: () => { if (f.type !== t) { buzz(6); set({ type: t, category: '', subCategory: '', customCat: false, split: false, topup: false }); } }
+      onclick: () => { if (f.type !== t) { buzz(6); set({ type: t, category: '', subCategory: '', customCat: false, split: false, topup: false }, true, { type: t }); } }
     }, TYPE_LABEL[t])));
   const from = S.segPrev === null ? idx : S.segPrev;
   seg.style.setProperty('--i', from);
-  if (from !== idx) requestAnimationFrame(() => requestAnimationFrame(() => seg.style.setProperty('--i', idx)));
+  if (from !== idx) {
+    requestAnimationFrame(() => requestAnimationFrame(() => seg.style.setProperty('--i', idx)));
+    springEl(segBlob, [
+      { transform: 'scale3d(1, 1, 1)' },
+      { transform: 'scale3d(1.24, .88, 1)', offset: 0.38 },
+      { transform: 'scale3d(.96, 1.03, 1)', offset: 0.78 },
+      { transform: 'scale3d(1, 1, 1)' }
+    ], 340);
+  }
   S.segPrev = idx;
 
   const section = (label, ...kids) => h('div', { class: 'sec' }, h('span', { class: 'lbl' }, label), ...kids);
-  const walletChips = (selected, onPick, exclude) => h('div', { class: 'chips scroll' },
-    walletNames().filter((n) => n !== exclude).map((n) => h('button', { type: 'button', class: 'chip', 'aria-pressed': String(n === selected), onclick: () => { buzz(5); onPick(n); } }, n)));
+  const walletChips = (selected, onPick, exclude, group) => h('div', { class: 'chips scroll', 'data-wgroup': group || 'main' },
+    walletNames().filter((n) => n !== exclude).map((n) => h('button', {
+      type: 'button', class: 'chip', 'data-wallet': n, 'aria-pressed': String(n === selected),
+      onclick: () => { buzz(5); onPick(n); }
+    }, n)));
 
   const body = [];
   // วันเวลา: แสดงเป็นปุ่มเดียว แตะแล้วกางให้เลือก
-  body.push(h('button', { type: 'button', class: 'when-pill' + (f.whenOpen ? ' open' : ''), 'aria-expanded': String(!!f.whenOpen), onclick: () => set({ whenOpen: !f.whenOpen }) },
-    h('span', { 'aria-hidden': 'true' }, '🕒'), h('span', null, whenLabel(f)), h('span', { class: 'chev', 'aria-hidden': 'true' }, '›')));
+  body.push(h('button', { type: 'button', class: 'when-pill' + (f.whenOpen ? ' open' : ''), 'aria-expanded': String(!!f.whenOpen),
+    onclick: () => set({ whenOpen: !f.whenOpen }, true, !f.whenOpen ? { panel: '.when-panel' } : null) },
+    uiIcon('clock', 15), h('span', { class: 'when-txt' }, whenLabel(f)), h('span', { class: 'chev', 'aria-hidden': 'true' }, uiIcon('chevR', 14))));
   if (f.whenOpen) body.push(whenPanel(f, set));
 
   // ปุ่มจดเร็ว
   const presets = (S.boot.presets || []).filter((p) => p.type === f.type);
   if (!f.editId && presets.length) {
-    body.push(section('จดเร็ว', h('div', { class: 'chips scroll', role: 'group', 'aria-label': 'จดเร็ว' }, presets.map((p) => h('button', {
-      type: 'button', class: 'stamp', onclick: () => { buzz(6); set({
-        category: p.category, subCategory: p.subCategory || '', note: p.label, customCat: false,
-        amount: p.amount ? String(p.amount) : f.amount,
-        wallet: p.wallet && walletNames().includes(p.wallet) ? p.wallet : (f.walletTouched ? f.wallet : walletForCategory(p.category, f.wallet))
-      }); }
-    }, h('b', null, catIconKey(p.category) ? svgIcon(catIconKey(p.category), 16) : null, p.label), h('span', { class: 'num' }, p.amount ? '฿' + money(p.amount) : p.category))))));
+    body.push(section('จดเร็ว', h('div', { class: 'chips scroll', role: 'group', 'aria-label': 'จดเร็ว' }, presets.map((p) => {
+      const pk = catIconKey(p.category);
+      return h('button', {
+        type: 'button', class: 'stamp', 'data-preset': p.label, onclick: () => {
+          buzz(6);
+          const nextW = p.wallet && walletNames().includes(p.wallet) ? p.wallet : (f.walletTouched ? f.wallet : walletForCategory(p.category, f.wallet));
+          set({
+            category: p.category, subCategory: p.subCategory || '', note: p.label, customCat: false,
+            amount: p.amount ? String(p.amount) : f.amount, wallet: nextW
+          }, true, { preset: p.label, cat: p.category, wallet: nextW !== f.wallet ? nextW : null });
+        }
+      },
+        pk ? h('span', { class: 'st-ic', 'aria-hidden': 'true' }, svgIcon(pk, 15)) : null,
+        h('span', { class: 'st-txt' }, h('b', null, p.label), h('span', { class: 'num' }, p.amount ? '฿' + money(p.amount) : p.category)));
+    }))));
   }
 
   if (f.type === 'Transfer') {
-    body.push(section('จากกระเป๋า', walletChips(f.wallet, (n) => set({ wallet: n }))));
-    body.push(section('ไปกระเป๋า', walletChips(f.toWallet, (n) => set({ toWallet: n }), f.wallet)));
+    body.push(section('จากกระเป๋า', walletChips(f.wallet, (n) => set({ wallet: n }, true, { wallet: n, wgroup: 'from' }), null, 'from')));
+    body.push(section('ไปกระเป๋า', walletChips(f.toWallet, (n) => set({ toWallet: n }, true, { wallet: n, wgroup: 'to' }), f.wallet, 'to')));
     const tc = categoriesFor('Transfer');
     if (tc.length > 1) body.push(section('หมวด', h('div', { class: 'chips' }, tc.map((c) => h('button', { type: 'button', class: 'chip', 'aria-pressed': String(c === (f.category || 'โอนย้าย')), onclick: () => set({ category: c }) }, c)))));
   } else {
-    // หมวด: ช่องไอคอนใหญ่ จิ้มง่าย
+    // หมวดโฉมใหม่: ป้ายหมวดกะทัดรัด เห็นชื่อเต็ม ไม่บังส่วนเลือกกระเป๋าด้านล่าง
     const all = categoriesFor(f.type);
     if (f.category && !f.customCat && !all.includes(f.category)) all.unshift(f.category);
-    const TOP = 7;   // หมวดเรียงตามที่ใช้บ่อยที่สุด
+    const TOP = 8;
     let cats = f.showAllCats ? all : all.slice(0, TOP);
     if (!f.showAllCats && f.category && !cats.includes(f.category) && all.includes(f.category)) cats = [...cats, f.category];
-    const tile = (label, badge, pressed, onclick, cls) => h('button', { type: 'button', class: 'cat' + (cls ? ' ' + cls : ''), 'aria-pressed': pressed === null ? null : String(pressed), onclick },
-      badge, h('span', { class: 'cl' }, label));
-    const grid = h('div', { class: 'cat-grid' },
-      cats.map((c) => tile(c, catBadge(c), !f.customCat && c === f.category, () => { buzz(5); set({
-        category: c, subCategory: f.category === c ? f.subCategory : '', customCat: false,
-        wallet: f.walletTouched || f.editId ? f.wallet : walletForCategory(c, f.wallet) }); })),
-      all.length > cats.length ? tile(`อื่น ๆ (${all.length - cats.length})`, catBadge('', 'more'), null, () => set({ showAllCats: true }), 'ghost') : null,
-      tile('หมวดใหม่', catBadge('', 'plus'), !!f.customCat, () => set({ customCat: true, category: '' }), 'ghost'));
-    body.push(section('หมวด', grid,
-      f.customCat ? h('input', { class: 'input', type: 'text', placeholder: 'พิมพ์ชื่อหมวดใหม่', value: f.category, oninput: (e) => { f.category = e.target.value; } }) : null));
+    const pill = (label, ico, pressed, onclick, cls, catName) => h('button', {
+      type: 'button', class: 'cat-pill' + (cls ? ' ' + cls : ''), 'data-cat': catName || null, 'aria-pressed': pressed === null ? null : String(pressed), onclick
+    }, ico, h('span', null, label));
+    const flow = h('div', { class: 'cat-flow' },
+      cats.map((c) => pill(c, catPillIcon(c), !f.customCat && c === f.category, () => {
+        buzz(5);
+        const nextW = f.walletTouched || f.editId ? f.wallet : walletForCategory(c, f.wallet);
+        set({
+          category: c, subCategory: f.category === c ? f.subCategory : '', customCat: false, wallet: nextW
+        }, true, { cat: c, wallet: nextW !== f.wallet ? nextW : null });
+      }, null, c)),
+      all.length > cats.length ? pill(`ดูเพิ่ม (${all.length - cats.length})`, catPillIcon('', 'more'), null, () => set({ showAllCats: true }, true, { moreCats: TOP }), 'ghost') : null,
+      f.showAllCats && all.length > TOP ? pill('ย่อลง', h('span', { class: 'ci-s' }, uiIcon('chevL', 14)), null, () => set({ showAllCats: false }), 'ghost') : null,
+      pill('หมวดใหม่', catPillIcon('', 'plus'), !!f.customCat, () => set({ customCat: true, category: '' }, true, { panel: '#custom-cat-in' }), 'ghost'));
+    body.push(section('หมวด', flow,
+      f.customCat ? h('input', { class: 'input', id: 'custom-cat-in', type: 'text', placeholder: 'พิมพ์ชื่อหมวดใหม่', value: f.category, oninput: (e) => { f.category = e.target.value; } }) : null));
     body.push(section(f.type === 'Income' ? 'เข้ากระเป๋า' : 'จ่ายจากกระเป๋า',
       f.legacy && !f.wallet ? h('p', { class: 'hint' }, 'ประวัติเดิมไม่มีข้อมูลกระเป๋า เลือกได้ถ้าจำได้') : null,
-      walletChips(f.wallet, (n) => set({ wallet: n, walletTouched: true }))));
+      walletChips(f.wallet, (n) => set({ wallet: n, walletTouched: true }, true, { wallet: n, wgroup: 'main' }), null, 'main')));
   }
   if (f.category === RENT_CATEGORY) {
     body.push(h('div', { class: 'field' }, h('label', { for: 'rent-month', class: 'lbl' }, 'เป็นค่าห้องของเดือน'),
@@ -1291,22 +1481,24 @@ function renderSheet() {
 
   // ตัวเลือกเสริม: เป็นปุ่มเปิด/ปิด แทนลิงก์ยาว ๆ
   if (f.type !== 'Transfer') {
-    const opt = (key, label, on, patch) => h('button', { type: 'button', class: 'chip opt', 'aria-pressed': String(!!on), onclick: () => set(patch) }, label);
-    const opts = [opt('sub', 'หมวดย่อย', f.showSub || !!f.subCategory, { showSub: !(f.showSub || f.subCategory) })];
+    const opt = (key, label, on, patch, panelSel) => h('button', { type: 'button', class: 'chip opt', 'aria-pressed': String(!!on),
+      onclick: () => set(patch, true, !on && panelSel ? { panel: panelSel } : null) }, label);
+    const subOn = !!(f.showSub || f.subCategory);
+    const opts = [opt('sub', 'หมวดย่อย', subOn, { showSub: !subOn }, '#box-sub')];
     if (f.type === 'Expense') {
-      opts.push(opt('split', 'หารกับเพื่อน', f.split, { split: !f.split, myShare: !f.split && !f.myShare ? String(Math.round(Number(f.amount || 0) / 2 * 100) / 100) : f.myShare }));
-      if (!f.editId) opts.push(opt('topup', 'เงินไม่พอ ดึงจากกระเป๋าอื่น', f.topup, { topup: !f.topup }));
+      opts.push(opt('split', 'หารกับเพื่อน', f.split, { split: !f.split, myShare: !f.split && !f.myShare ? String(Math.round(Number(f.amount || 0) / 2 * 100) / 100) : f.myShare }, '#box-split'));
+      if (!f.editId) opts.push(opt('topup', 'เงินไม่พอ ดึงจากกระเป๋าอื่น', f.topup, { topup: !f.topup }, '#box-topup'));
     }
     body.push(section('ตัวเลือกเสริม', h('div', { class: 'chips' }, opts)));
-    if (f.showSub || f.subCategory) {
+    if (subOn) {
       const subs = (S.boot.subCategories || []).filter((s) => s.type === f.type && s.category === f.category).map((s) => s.subCategory);
-      body.push(h('div', { class: 'field sub-box' }, h('label', { for: 'sub', class: 'lbl' }, 'หมวดย่อย'),
+      body.push(h('div', { class: 'field sub-box', id: 'box-sub' }, h('label', { for: 'sub', class: 'lbl' }, 'หมวดย่อย'),
         subs.length ? h('div', { class: 'chips' }, subs.map((s) => h('button', { type: 'button', class: 'chip', 'aria-pressed': String(s === f.subCategory), onclick: () => set({ subCategory: s === f.subCategory ? '' : s }) }, s))) : null,
         h('input', { class: 'input', id: 'sub', type: 'text', placeholder: 'หรือพิมพ์เอง', value: f.subCategory, oninput: (e) => { f.subCategory = e.target.value; } })));
     }
     if (f.type === 'Expense' && f.split) {
       const amt = Number(f.amount || 0);
-      body.push(h('div', { class: 'field sub-box' }, h('label', { for: 'share', class: 'lbl' }, 'ส่วนของฉัน (บาท)'),
+      body.push(h('div', { class: 'field sub-box', id: 'box-split' }, h('label', { for: 'share', class: 'lbl' }, 'ส่วนของฉัน (บาท)'),
         amt > 0 ? h('div', { class: 'chips' }, [2, 3, 4].map((n) => {
           const v = String(Math.round(amt / n * 100) / 100);
           return h('button', { type: 'button', class: 'chip', 'aria-pressed': String(f.myShare === v), onclick: () => set({ myShare: v }) }, `หาร ${n} = ${money(v)}`);
@@ -1315,7 +1507,7 @@ function renderSheet() {
         h('p', { class: 'hint' }, 'ยอดในกระเป๋าลดตามจำนวนเงินเต็ม ส่วนสรุปรายจ่ายนับแค่ส่วนของฉัน')));
     }
     if (f.type === 'Expense' && f.topup && !f.editId) {
-      body.push(h('div', { class: 'field sub-box' }, h('span', { class: 'lbl' }, 'ดึงเงินมาจาก'), walletChips(f.topupFrom, (n) => set({ topupFrom: n }), f.wallet),
+      body.push(h('div', { class: 'field sub-box', id: 'box-topup' }, h('span', { class: 'lbl' }, 'ดึงเงินมาจาก'), walletChips(f.topupFrom, (n) => set({ topupFrom: n }, true, { wallet: n, wgroup: 'topup' }), f.wallet, 'topup'),
         h('label', { for: 'topup', class: 'lbl' }, 'ยอดที่ถูกเติม (บาท)'),
         h('input', { class: 'input num', id: 'topup', type: 'number', inputmode: 'decimal', step: '0.01', value: f.topupAmount, oninput: (e) => { f.topupAmount = e.target.value; } }),
         h('p', { class: 'hint' }, `บันทึกเป็น 2 รายการ: โอนย้าย ${f.topupFrom || '...'} ไป ${f.wallet || '...'} และรายจ่ายจาก ${f.wallet || '...'}`)));
@@ -1324,22 +1516,59 @@ function renderSheet() {
   if (f.editId) body.push(h('button', { type: 'button', class: 'btn danger', onclick: deleteEntry }, 'ลบรายการนี้'));
   body.push(h('p', { class: 'err', id: 'entry-err', hidden: true }));
 
+  body.forEach((el, i) => { if (el && el.style) el.style.setProperty('--si', Math.min(i, 6)); });
+
   const keys = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '.', '0', 'del'];
   const keypad = h('div', { class: 'keypad' },
-    keys.map((k) => h('button', { type: 'button', 'aria-label': k === 'del' ? 'ลบตัวเลข' : null, onclick: () => keyPress(k) }, k === 'del' ? '⌫' : k)),
+    keys.map((k) => h('button', { type: 'button', 'aria-label': k === 'del' ? 'ลบตัวเลข' : null, onclick: () => keyPress(k) }, k === 'del' ? uiIcon('backspace', 21) : k)),
     h('button', { type: 'button', class: 'save', id: 'entry-save', onclick: submitEntry }, 'บันทึก'));
 
-  const btnClose = h('button', { type: 'button', class: 'icon-btn', 'aria-label': 'ปิด', onclick: closeSheet });
-  btnClose.innerHTML = '<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M6.4 5 12 10.6 17.6 5 19 6.4 13.4 12l5.6 5.6-1.4 1.4-5.6-5.6L6.4 19 5 17.6 10.6 12 5 6.4z"/></svg>';
+  const btnClose = h('button', { type: 'button', class: 'icon-btn', 'aria-label': 'ปิด', onclick: closeSheet }, uiIcon('close', 20));
   const sheet = $('#sheet');
   sheet.dataset.type = f.type;
   sheet.classList.remove('typing');
   sheet.replaceChildren(
+    h('div', { class: 'sheet-grab', 'aria-hidden': 'true' }),
     h('div', { class: 'sheet-head' }, btnClose, seg),
     h('div', { id: 'amount-display', class: 'amount-display num', 'aria-live': 'polite' }),
     h('div', { class: 'sheet-scroll' }, body),
     keypad);
-  updateAmount(false);
+  updateAmount(fx.preset ? 'preset' : false);
+
+  // Micro-interactions เฉพาะจุดที่เพิ่งแตะ (ไม่เล่นซ้ำทั้งแผ่นจด)
+  if (!reduceMotion()) {
+    if (fx.type) springEl($('#amount-display'), [{ transform: 'scale(.94)' }, { transform: 'scale(1.03)', offset: 0.5 }, { transform: 'scale(1)' }], 260);
+    if (fx.preset) {
+      const st = [...sheet.querySelectorAll('.stamp')].find((b) => b.dataset.preset === fx.preset);
+      springEl(st, [{ transform: 'scale(.91) rotate(-2deg)' }, { transform: 'scale(1.05) rotate(.8deg)', offset: 0.52 }, { transform: 'scale(1)' }], 280);
+    }
+    if (fx.cat) {
+      const cp = [...sheet.querySelectorAll('.cat-pill')].find((b) => b.dataset.cat === fx.cat);
+      springEl(cp, [{ transform: 'scale(.9)' }, { transform: 'scale(1.05)', offset: 0.52 }, { transform: 'scale(1)' }], 260, 'cubic-bezier(.28, 1.28, .52, 1)');
+      springEl(cp && cp.querySelector('.ci-s'), [{ transform: 'rotate(-16deg) scale(.82)' }, { transform: 'rotate(6deg) scale(1.2)', offset: 0.5 }, { transform: 'rotate(0) scale(1)' }], 320);
+    }
+    if (fx.wallet) {
+      const scope = sheet.querySelector(`[data-wgroup="${fx.wgroup || 'main'}"]`) || sheet;
+      const wc = [...scope.querySelectorAll('.chip')].find((b) => b.dataset.wallet === fx.wallet);
+      springEl(wc, [{ transform: 'scale(.88)' }, { transform: 'scale(1.06)', offset: 0.52 }, { transform: 'scale(1)' }], 260, 'cubic-bezier(.28, 1.28, .52, 1)');
+    }
+    if (fx.panel) {
+      const pnl = sheet.querySelector(fx.panel);
+      springEl(pnl, [{ opacity: 0, transform: 'translate3d(0, -10px, 0) scale(.97)' }, { opacity: 1, transform: 'translate3d(0, 0, 0) scale(1)' }], 250);
+    }
+    if (fx.moreCats) {
+      [...sheet.querySelectorAll('.cat-flow .cat-pill')].slice(fx.moreCats).forEach((el, i) => {
+        if (el.animate) el.animate(
+          [{ opacity: 0, transform: 'translate3d(0, 8px, 0) scale(.92)' }, { opacity: 1, transform: 'translate3d(0, 0, 0) scale(1)' }],
+          { duration: 220, delay: Math.min(i, 8) * 18, easing: 'cubic-bezier(.22, 1, .36, 1)', fill: 'backwards' }
+        );
+      });
+    }
+    if (fx.day) {
+      const dc = sheet.querySelector('.day-chip[aria-pressed="true"]');
+      springEl(dc, [{ transform: 'scale(.9)' }, { transform: 'scale(1.05)', offset: 0.5 }, { transform: 'scale(1)' }], 240);
+    }
+  }
 }
 
 // ตอนพิมพ์ข้อความ (โน้ต ฯลฯ) ซ่อนแป้นตัวเลข จะได้ไม่เบียดกับคีย์บอร์ดมือถือ
@@ -1350,54 +1579,149 @@ $('#sheet').addEventListener('focusout', () => {
   setTimeout(() => { if (!$('#sheet').contains(document.activeElement) || !document.activeElement.matches('input')) $('#sheet').classList.remove('typing'); }, 50);
 });
 
-// ------------------------------------------------------------ gestures
-// ดึงลงเพื่อรีเฟรช
+// ------------------------------------------------------------ gestures (รวมเฟรมด้วย rAF ลื่นเท่ากันทุก 60/90/120Hz)
+// ตอบสนองการแตะทันทีในเฟรมแรก (ไม่ต้องรอดีเลย์ :active ของเบราว์เซอร์มือถือในกรอบ scroll)
+(function instantPress() {
+  let cur = null;
+  const clear = () => { if (cur) { cur.classList.remove('is-pressed'); cur = null; } };
+  window.addEventListener('pointerdown', (e) => {
+    clear();
+    const b = e.target && e.target.closest ? e.target.closest('button, .day-chip') : null;
+    if (b && !b.disabled) { cur = b; cur.classList.add('is-pressed'); }
+  }, { passive: true });
+  window.addEventListener('pointerup', clear, { passive: true });
+  window.addEventListener('pointercancel', clear, { passive: true });
+  window.addEventListener('scroll', clear, { passive: true, capture: true });
+})();
+
+// ดึงลงเพื่อรีเฟรช (ผูกกับ vsync ผ่าน rAF)
 (function pullToRefresh() {
   const ind = $('#ptr');
-  const TH = 64;
-  let y0 = null, dist = 0;
+  const TH = 62;
+  let y0 = null, dist = 0, raf = 0, pendingDy = 0;
   const reset = () => { ind.classList.add('back'); ind.style.transform = ''; ind.style.opacity = '0'; ind.classList.remove('ready'); };
+  const paint = () => {
+    raf = 0;
+    if (y0 === null) return;
+    if (pendingDy <= 0 || window.scrollY > 0) { dist = 0; ind.style.opacity = '0'; ind.style.transform = ''; return; }
+    dist = Math.min(108, pendingDy * 0.48);
+    ind.style.opacity = String(Math.min(1, dist / TH));
+    ind.style.transform = `translate3d(-50%, ${dist}px, 0) rotate(${dist * 3.5}deg)`;
+    const ready = dist >= TH;
+    if (ready && !ind.classList.contains('ready')) buzz(8);
+    ind.classList.toggle('ready', ready);
+  };
   window.addEventListener('touchstart', (e) => {
     y0 = null;
     if (!S.cfg || S.view === 'setup' || !$('#sheet').hidden || window.scrollY > 0 || e.touches.length !== 1) return;
-    y0 = e.touches[0].clientY; dist = 0;
+    y0 = e.touches[0].clientY; dist = 0; pendingDy = 0;
     ind.classList.remove('back');
   }, { passive: true });
   window.addEventListener('touchmove', (e) => {
     if (y0 === null) return;
-    const dy = e.touches[0].clientY - y0;
-    if (dy <= 0 || window.scrollY > 0) { dist = 0; ind.style.opacity = '0'; ind.style.transform = ''; return; }
-    dist = Math.min(110, dy * 0.5);
-    ind.style.opacity = String(Math.min(1, dist / TH));
-    ind.style.transform = `translate(-50%, ${dist}px) rotate(${dist * 4}deg)`;
-    const ready = dist >= TH;
-    if (ready && !ind.classList.contains('ready')) buzz(8);
-    ind.classList.toggle('ready', ready);
+    pendingDy = e.touches[0].clientY - y0;
+    if (!raf) raf = requestAnimationFrame(paint);
   }, { passive: true });
   window.addEventListener('touchend', () => {
     if (y0 === null) return;
     y0 = null;
+    if (raf) { cancelAnimationFrame(raf); raf = 0; }
     if (dist >= TH) {
       ind.classList.add('back', 'loading');
-      ind.style.transform = `translate(-50%, ${TH * 0.8}px)`;
+      ind.style.transform = `translate3d(-50%, ${TH * 0.78}px, 0)`;
       syncNow(false).finally(() => { ind.classList.remove('loading'); reset(); });
     } else reset();
     dist = 0;
-  });
+  }, { passive: true });
 })();
 
-// ปัดซ้าย/ขวาที่หน้ารายการ = เปลี่ยนเดือน
+// ลากส่วนหัวแผ่นจดลงเพื่อปิด + ดึงฉากหลังกลับมาตามนิ้วแบบ iOS
+(function sheetDragToClose() {
+  const s = $('#sheet'), m = $('#main');
+  let y0 = null, x0 = 0, dy = 0, t0 = 0, raf = 0;
+  const paint = () => {
+    raf = 0;
+    if (y0 === null || dy <= 0) return;
+    s.style.transform = `translate3d(0, ${dy}px, 0)`;
+    const p = Math.min(1, dy / 260);
+    m.style.transition = 'none';
+    m.style.transform = `scale(${(0.955 + 0.045 * p).toFixed(4)}) translate3d(0, ${(8 * (1 - p)).toFixed(1)}px, 0)`;
+    m.style.opacity = String((0.62 + 0.38 * p).toFixed(3));
+  };
+  s.addEventListener('touchstart', (e) => {
+    y0 = null;
+    if (!sheetOpen() || e.touches.length !== 1 || reduceMotion()) return;
+    const handle = e.target.closest('.sheet-grab, .sheet-head, .amount-display');
+    if (!handle || e.target.closest('button')) return;
+    y0 = e.touches[0].clientY; x0 = e.touches[0].clientX; dy = 0; t0 = performance.now();
+    s.classList.remove('snap-back', 'opening');
+  }, { passive: true });
+  s.addEventListener('touchmove', (e) => {
+    if (y0 === null) return;
+    const my = e.touches[0].clientY - y0, mx = e.touches[0].clientX - x0;
+    if (dy === 0 && Math.abs(mx) > Math.abs(my)) { y0 = null; return; }
+    dy = Math.max(0, my);
+    if (dy > 2) s.classList.add('dragging');
+    if (!raf) raf = requestAnimationFrame(paint);
+  }, { passive: true });
+  s.addEventListener('touchend', () => {
+    if (y0 === null) return;
+    y0 = null;
+    if (raf) { cancelAnimationFrame(raf); raf = 0; }
+    m.style.transition = '';
+    const dt = Math.max(1, performance.now() - t0);
+    const vel = dy / dt;
+    if (dy > 88 || (dy > 32 && vel > 0.65)) closeSheet();
+    else if (dy > 0) {
+      s.classList.remove('dragging');
+      s.classList.add('snap-back');
+      s.style.transform = '';
+      m.style.transform = ''; m.style.opacity = '';
+      setTimeout(() => s.classList.remove('snap-back'), 290);
+    }
+    dy = 0;
+  }, { passive: true });
+})();
+
+// ปัดซ้าย/ขวาที่หน้ารายการ = ขยับตามนิ้วแล้วเปลี่ยนเดือน
 (function swipeMonths() {
   const v = $('#v-list');
-  let x0 = null, y0 = 0;
-  v.addEventListener('touchstart', (e) => { if (e.touches.length === 1) { x0 = e.touches[0].clientX; y0 = e.touches[0].clientY; } }, { passive: true });
+  let x0 = null, y0 = 0, dx = 0, locked = 0, raf = 0;
+  const paint = () => {
+    raf = 0;
+    const box = $('#list-results');
+    if (box && locked === 1) box.style.transform = `translate3d(${(dx * 0.24).toFixed(1)}px, 0, 0)`;
+  };
+  v.addEventListener('touchstart', (e) => {
+    if (e.touches.length === 1 && !e.target.closest('input')) {
+      x0 = e.touches[0].clientX; y0 = e.touches[0].clientY; dx = 0; locked = 0;
+      const box = $('#list-results');
+      if (box) box.style.transition = 'none';
+    }
+  }, { passive: true });
+  v.addEventListener('touchmove', (e) => {
+    if (x0 === null || reduceMotion()) return;
+    dx = e.touches[0].clientX - x0;
+    const dy = e.touches[0].clientY - y0;
+    if (!locked) locked = Math.abs(dx) > 12 && Math.abs(dx) > Math.abs(dy) * 1.3 ? 1 : (Math.abs(dy) > 12 ? -1 : 0);
+    if (locked === 1 && !raf) raf = requestAnimationFrame(paint);
+  }, { passive: true });
   v.addEventListener('touchend', (e) => {
     if (x0 === null) return;
+    if (raf) { cancelAnimationFrame(raf); raf = 0; }
     const t = e.changedTouches[0];
-    const dx = t.clientX - x0, dy = t.clientY - y0;
+    const fx = t.clientX - x0, fy = t.clientY - y0;
     x0 = null;
-    if (Math.abs(dx) > 70 && Math.abs(dy) < 45) moveMonth(dx < 0 ? 1 : -1);
-  });
+    const box = $('#list-results');
+    if (Math.abs(fx) > 68 && Math.abs(fy) < 48) {
+      if (box) { box.style.transition = ''; box.style.transform = ''; }
+      moveMonth(fx < 0 ? 1 : -1);
+    } else if (box && locked === 1) {
+      box.style.transition = 'transform .24s cubic-bezier(.22, 1, .36, 1)';
+      box.style.transform = '';
+    }
+    locked = 0; dx = 0;
+  }, { passive: true });
 })();
 
 // เลื่อนลงแล้วซ่อนปุ่มจด / หัวแอพมีเงาเมื่อเลื่อน

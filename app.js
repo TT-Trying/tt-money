@@ -8,7 +8,7 @@
  *  - Polling: ดึงข้อมูลใหม่ทุก 30 วิ ตอนเปิดแอพอยู่ (แก้ใน Google Sheet ตรง ๆ ก็เห็นเอง)
  */
 
-const APP_VERSION = '1.1.0';
+const APP_VERSION = '1.2.0';
 const TYPE_LABEL = { Expense: 'รายจ่าย', Income: 'รายรับ', Transfer: 'โอนย้าย' };
 const TH_MONTHS = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'];
 const TH_DAYS = ['อา.', 'จ.', 'อ.', 'พ.', 'พฤ.', 'ศ.', 'ส.'];
@@ -724,6 +724,19 @@ async function loadSearchRange() {
   const months = Array.from({ length: SEARCH_MONTHS }, (_, i) => shiftMonth(curMonth(), -i)).filter((m) => !S.lists[m]);
   if (!months.length) return;
   rangeLoading = true;
+  // backend เวอร์ชันใหม่: ขอทุกเดือนในคำขอเดียว (อ่านชีตรอบเดียว)
+  const ep = S.epoch;
+  try {
+    const r = await api('listTransactions', { months, limit: 500 });
+    if (r && r.months) {
+      for (const m of months) if (r.months[m]) { S.lists[m] = { data: r.months[m], epoch: ep }; delete S.listErr[m]; }
+      saveLists();
+      rangeLoading = false;
+      if (S.view === 'list' && S.q) fillListResults();
+      return;
+    }
+  } catch (e) { /* ใช้วิธีเดิมด้านล่าง */ }
+  // backend เวอร์ชันเก่า: ขอทีละเดือน
   let i = 0;
   const worker = async () => {
     while (i < months.length) {

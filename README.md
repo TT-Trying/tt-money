@@ -17,6 +17,8 @@ frontend (โฟลเดอร์หลัก, GitHub Pages)  ──>  backend/
 ## Backend
 โค้ด Apps Script อยู่ที่ [`backend/Code.gs`](backend/Code.gs) วิธีติดตั้งและอัปเดตอยู่ที่ [`backend/README.md`](backend/README.md)
 
+ให้เพื่อนติดตั้งใช้เอง: [`docs/SETUP_GUIDE_TH.md`](docs/SETUP_GUIDE_TH.md) (โหลดไปให้ AI สอนทีละขั้นได้)
+
 ## ความลับ
 ไม่มีความลับอยู่ในไฟล์ใน repo นี้ จึงเป็น repo สาธารณะได้
 - Web app URL และ token เก็บไว้ในมือถือของ TT เท่านั้น

@@ -8,7 +8,7 @@
  *  - Polling: ดึงข้อมูลใหม่ทุก 30 วิ ตอนเปิดแอพอยู่ (แก้ใน Google Sheet ตรง ๆ ก็เห็นเอง)
  */
 
-const APP_VERSION = '1.3.1';
+const APP_VERSION = '2.0.0';
 const TYPE_LABEL = { Expense: 'รายจ่าย', Income: 'รายรับ', Transfer: 'โอนย้าย' };
 const TH_MONTHS = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'];
 const TH_DAYS = ['อา.', 'จ.', 'อ.', 'พ.', 'พฤ.', 'ศ.', 'ส.'];
@@ -393,6 +393,14 @@ function animateDynamic(root, entering) {
     el.style.transform = `scaleX(${from / 100})`;
     requestAnimationFrame(() => requestAnimationFrame(() => { el.style.transform = `scaleX(${w / 100})`; }));
   });
+  root.querySelectorAll('[data-ring]').forEach((el) => {
+    const k = el.dataset.ring, f = Number(el.dataset.f) || 0, c = Number(el.dataset.c);
+    const from = entering ? 0 : (S.barPrev['ring:' + k] !== undefined ? S.barPrev['ring:' + k] : 0);
+    S.barPrev['ring:' + k] = f;
+    if (rm) { el.style.strokeDashoffset = c * (1 - f); return; }
+    el.style.strokeDashoffset = c * (1 - from);
+    requestAnimationFrame(() => requestAnimationFrame(() => { el.style.strokeDashoffset = c * (1 - f); }));
+  });
   root.querySelectorAll('[data-txk]').forEach((el) => {
     const k = el.dataset.txk;
     if (!entering && !rm && !S.seenTx.has(k)) el.classList.add('tx-new');
@@ -401,13 +409,13 @@ function animateDynamic(root, entering) {
 }
 function skeleton(kind) {
   const rows = (n) => Array.from({ length: n }, () => h('div', { class: 'sk-row' }, h('span', { class: 'sk sk-a' }), h('span', { class: 'sk sk-b' })));
-  if (kind === 'home') return [h('div', { class: 'sk sk-hero' }), h('div', { class: 'card' }, rows(3)), h('div', { class: 'card' }, rows(4))];
+  if (kind === 'home') return [h('div', { class: 'sk sk-title' }), h('div', { class: 'sk sk-hero' }), h('div', { class: 'sk sk-rail' }), h('div', { class: 'card' }, rows(4))];
   return [h('div', { class: 'card' }, rows(7))];
 }
 
 // ------------------------------------------------------------ navigation / render
 function go(view) {
-  $('#btn-add').classList.remove('tuck');
+  $('.dock').classList.remove('mini');
   if (view === S.view && !$('#v-' + view).hidden) { window.scrollTo({ top: 0, behavior: reduceMotion() ? 'auto' : 'smooth' }); return; }
   const a = VIEWS.indexOf(S.view), b = VIEWS.indexOf(view);
   S.navDir = a < 0 || b < 0 ? 'up' : (b > a ? 'r' : 'l');
@@ -431,7 +439,7 @@ function moveMonth(k) {
   S.navDir = k > 0 ? 'r' : 'l';
   buzz(6);
   render();
-  const title = $('#v-list .month-nav strong');
+  const title = $('#v-list .month-nav .v-title');
   springEl(title, [
     { opacity: 0, transform: `translate3d(${k > 0 ? 20 : -20}px, 0, 0) scale(.94)` },
     { opacity: 1, transform: 'translate3d(0, 0, 0) scale(1)' }
@@ -484,6 +492,7 @@ function render(opts) {
     if (b.dataset.view === S.view) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
   });
   moveTabInk();
+  $('.brand').textContent = { home: 'TT Money', list: 'รายการ', wallets: 'กระเป๋า', setup: 'ตั้งค่า' }[cur] || 'TT Money';
 
   const el = $('#v-' + cur);
   const sig = cur + '|' + (cur === 'list' ? S.month : '');
@@ -552,17 +561,12 @@ function renderHome() {
   const total = round2(ws.reduce((s, w) => s + Number(w.balance || 0), 0));
   const savings = round2(ws.filter((w) => w.type === 'Savings').reduce((s, w) => s + Number(w.balance || 0), 0));
   const notStarted = ws.every((w) => !w.opening);
-  const sm = b.summary;
-  const maxCat = Math.max(1, ...sm.expenseByCategory.map((c) => c.amount));
+  const now = new Date();
 
   const els = [
-    h('div', { class: 'hero', 'data-flash': '' },
-      h('div', { class: 'hero-label' }, 'ยอดคงเหลือรวม'),
-      h('div', { class: 'hero-amount num' }, h('small', null, '฿'), tw('total', total, null, true)),
-      h('div', { class: 'hero-sub' },
-        h('span', null, 'ใช้ได้ ', h('b', { class: 'num' }, tw('avail', round2(total - savings)))),
-        h('span', null, 'เงินเก็บ ', h('b', { class: 'num' }, tw('sav', savings)))),
-      dailyBox(ws, round2(total - savings))),
+    h('header', { class: 'v-head' },
+      h('div', { class: 'eyebrow' }, greeting(now)),
+      h('h1', { class: 'v-title' }, `${TH_DAYS_FULL[now.getDay()]} ${now.getDate()} ${TH_MONTHS[now.getMonth()]}`)),
   ];
   if (notStarted) els.push(h('div', { class: 'notice' },
     'ยังไม่ได้ใส่ยอดตั้งต้นของกระเป๋า ยอดคงเหลือจะยังไม่ตรงกับเงินจริง',
@@ -571,37 +575,26 @@ function renderHome() {
     `มี ${S.queue.length} รายการที่ยังไม่ได้ส่งขึ้น Google Sheet (บันทึกไว้ในเครื่องแล้ว)`,
     h('div', null, h('button', { class: 'btn', type: 'button', onclick: () => syncNow(false) }, 'ส่งตอนนี้'))));
 
-  els.push(h('section', null, h('h2', null, 'กระเป๋า'),
-    h('div', { class: 'ledger' }, ws.map((w) => h('div', { class: 'ledger-row', 'data-flash': '' },
-      h('span', { class: 'name' }, w.name),
-      w.type === 'Savings' ? h('span', { class: 'tag' }, 'เงินเก็บ') : null,
-      tw('w:' + w.name, Number(w.balance || 0), 'amt num' + (w.balance < 0 ? ' neg' : '')))))));
-
+  els.push(todayCard(ws, total, savings));
+  els.push(walletRail(ws, total, savings));
+  els.push(monthCard(b.summary));
   els.push(h('section', { class: 'card' },
-    h('h2', null, 'เดือนนี้ (' + monthLabel(sm.month) + ')'),
-    h('div', { class: 'month-head' },
-      h('span', { 'data-flash': '' }, 'จ่าย ', tw('exp', Number(sm.expenseTotal || 0), 'big num neg')),
-      h('span', { 'data-flash': '' }, 'รับ ', tw('inc', Number(sm.incomeTotal || 0), 'big num pos'))),
-    sm.expenseByCategory.length
-      ? h('ul', { class: 'bars' }, sm.expenseByCategory.slice(0, 6).map((c) => {
-          const ik = catIconKey(c.category);
-          return h('li', null,
-            h('span', { class: 'bar-cat' }, ik ? svgIcon(ik, 16) : null, c.category),
-            h('span', { class: 'num' }, money(c.amount)),
-            h('span', { class: 'bar', 'aria-hidden': 'true' },
-              h('span', { 'data-bar': 'c:' + c.category, 'data-w': Math.max(2, c.amount / maxCat * 100) })));
-        }))
-      : h('p', { class: 'muted' }, 'ยังไม่มีรายจ่ายเดือนนี้')));
-
-  els.push(h('section', { class: 'card' }, h('h2', null, 'ล่าสุด'),
-    b.recent.length ? h('ul', { class: 'tx-list' }, b.recent.slice(0, 8).map(txItem)) : h('p', { class: 'muted' }, 'ยังไม่มีรายการ กดปุ่ม จด เพื่อเริ่ม'),
-    h('button', { class: 'link', type: 'button', onclick: () => go('list') }, 'ดูทั้งหมด', uiIcon('chevR', 15))));
+    h('div', { class: 'sec-head' }, h('h2', null, 'ล่าสุด'),
+      h('button', { class: 'link', type: 'button', onclick: () => go('list') }, 'ดูทั้งหมด', uiIcon('chevR', 15))),
+    b.recent.length ? h('ul', { class: 'tx-list' }, b.recent.slice(0, 6).map((t) => txItem(t))) : h('p', { class: 'muted' }, 'ยังไม่มีรายการ กดปุ่ม + เพื่อเริ่ม')));
   $('#v-home').replaceChildren(...els);
+}
+
+const TH_DAYS_FULL = ['อาทิตย์', 'จันทร์', 'อังคาร', 'พุธ', 'พฤหัสบดี', 'ศุกร์', 'เสาร์'];
+const TH_MONTHS_FULL = ['มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน', 'พฤษภาคม', 'มิถุนายน', 'กรกฎาคม', 'สิงหาคม', 'กันยายน', 'ตุลาคม', 'พฤศจิกายน', 'ธันวาคม'];
+function greeting(d) {
+  const hr = d.getHours();
+  return hr < 5 ? 'ดึกแล้วนะ' : hr < 11 ? 'อรุณสวัสดิ์' : hr < 16 ? 'สวัสดีตอนบ่าย' : hr < 19 ? 'สวัสดีตอนเย็น' : 'ราตรีสวัสดิ์';
 }
 
 // งบวันนี้ = (เงินที่ใช้ได้ + ที่จ่ายไปแล้ววันนี้) ÷ จำนวนวันที่เหลือในเดือน (นับวันนี้ด้วย)
 // บวกที่จ่ายวันนี้กลับเข้าไป จะได้ไม่ใช่ว่ายิ่งจ่าย งบวันนี้ยิ่งหด
-function dailyBox(ws, avail) {
+function dailyBudget(ws, avail) {
   const now = new Date();
   const today = ymdOf(now);
   const saving = new Set(ws.filter((w) => w.type === 'Savings').map((w) => w.name));
@@ -611,24 +604,91 @@ function dailyBox(ws, avail) {
     .reduce((s, t) => s + (Number(t.amount) || 0), 0));
   const dim = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
   const daysLeft = dim - now.getDate() + 1;
-  if (avail + spent <= 0) return h('div', { class: 'daily over' }, h('div', { class: 'd-top' }, 'เงินที่ใช้ได้หมดแล้ว'),
-    h('div', { class: 'd-sub' }, 'ลองโอนจากเงินเก็บ หรือรอรายรับเข้า'));
+  if (avail + spent <= 0) return { empty: true, spent, daysLeft };
   const perDay = Math.floor((avail + spent) / daysLeft);
   const left = round2(perDay - spent);
-  const pct = perDay > 0 ? Math.min(100, spent / perDay * 100) : 100;
-  return h('div', { class: 'daily' + (left < 0 ? ' over' : pct >= 80 ? ' near' : '') },
-    h('div', { class: 'd-top' },
-      left >= 0
-        ? [h('span', null, 'วันนี้ใช้ได้อีก'), h('b', { class: 'num' }, '฿', tw('dleft', left))]
-        : [h('span', null, 'วันนี้ใช้เกินงบ'), h('b', { class: 'num' }, '฿', tw('dover', Math.abs(left)))]),
-    h('div', { class: 'd-bar', 'aria-hidden': 'true' }, h('span', { 'data-bar': 'daily', 'data-w': pct })),
-    h('div', { class: 'd-sub num' }, `จ่ายวันนี้ ${money(spent)} จากงบวันละ ${money(perDay)} · เหลือ ${daysLeft} วันในเดือน`));
+  return { perDay, left, spent, daysLeft, frac: perDay > 0 ? Math.max(0, Math.min(1, left / perDay)) : 0 };
+}
+
+// การ์ดหลัก: วงแหวนงบวันนี้ + รอยปรุแบบสมุดฝาก + ยอดรวมด้านล่าง
+function todayCard(ws, total, savings) {
+  const avail = round2(total - savings);
+  const d = dailyBudget(ws, avail);
+  const state = d.empty || d.left < 0 ? 'over' : d.frac <= 0.2 ? 'near' : 'ok';
+  const R = 52, C = +(2 * Math.PI * R).toFixed(2);
+  const ring = h('div', { class: 'ring', 'aria-hidden': 'true' });
+  ring.innerHTML = `<svg viewBox="0 0 128 128" width="128" height="128"><circle class="ring-track" cx="64" cy="64" r="${R}"/>` +
+    `<circle class="ring-fill" cx="64" cy="64" r="${R}" stroke-dasharray="${C}" stroke-dashoffset="${C}" data-ring="today" data-f="${d.empty ? 0 : d.frac}" data-c="${C}"/></svg>`;
+  ring.append(h('div', { class: 'ring-mid' },
+    h('b', { class: 'num' }, d.empty ? '0%' : Math.round(d.frac * 100) + '%'), h('span', null, 'เหลือ')));
+  let main;
+  if (d.empty) main = [h('div', { class: 't-lbl' }, 'เงินที่ใช้ได้หมดแล้ว'), h('div', { class: 't-sub' }, 'ลองโอนจากเงินเก็บ หรือรอรายรับเข้า')];
+  else main = [
+    h('div', { class: 't-lbl' }, d.left >= 0 ? 'วันนี้ใช้ได้อีก' : 'วันนี้ใช้เกินงบ'),
+    h('div', { class: 't-amt num' }, h('small', null, '฿'), d.left >= 0 ? tw('dleft', d.left, null, true) : tw('dover', Math.abs(d.left))),
+    h('div', { class: 't-sub num' }, `จ่ายแล้ว ${money(d.spent)} · งบวันละ ${money(d.perDay)}`),
+    h('div', { class: 't-chip' }, `อีก ${d.daysLeft} วันจะสิ้นเดือน`)];
+  return h('section', { class: 'hero ' + state, 'data-flash': '' },
+    h('i', { class: 'guil', 'aria-hidden': 'true' }),
+    h('div', { class: 'hero-top' }, ring, h('div', { class: 'hero-txt' }, main)),
+    h('div', { class: 'perf', 'aria-hidden': 'true' }),
+    h('div', { class: 'hero-foot' },
+      h('div', null, h('span', null, 'ยอดรวม'), h('b', { class: 'num' }, tw('total', total))),
+      h('div', null, h('span', null, 'ใช้ได้'), h('b', { class: 'num' }, tw('avail', avail))),
+      h('div', null, h('span', null, 'เงินเก็บ'), h('b', { class: 'num' }, tw('sav', savings)))));
+}
+
+// กระเป๋าเป็นบัตรเลื่อนแนวนอน สีตามประเภท
+const WALLET_LOOK = {
+  Cash: { h: 152, ico: 'salary', lbl: 'เงินสด' }, Bank: { h: 218, ico: 'bank', lbl: 'ธนาคาร' },
+  'E-wallet': { h: 188, ico: 'phone', lbl: 'e-wallet' }, Savings: { h: 40, ico: 'saving', lbl: 'เงินเก็บ' },
+  Other: { h: 255, ico: 'more', lbl: 'อื่น ๆ' }
+};
+const walletLook = (w) => WALLET_LOOK[w.type] || WALLET_LOOK.Other;
+function walletRail(ws) {
+  const cards = ws.map((w) => {
+    const lk = walletLook(w);
+    return h('button', { type: 'button', class: 'wcard', style: `--wh:${lk.h}`, 'data-flash': '',
+      onclick: () => { S.openWallets.add(w.name); go('wallets'); } },
+      h('span', { class: 'wc-top' }, svgIcon(lk.ico, 16), h('span', null, lk.lbl)),
+      h('span', { class: 'wc-name' }, w.name),
+      tw('w:' + w.name, Number(w.balance || 0), 'wc-bal num' + (w.balance < 0 ? ' neg' : '')));
+  });
+  return h('section', null,
+    h('div', { class: 'sec-head' }, h('h2', null, 'กระเป๋า'),
+      h('button', { class: 'link', type: 'button', onclick: () => go('wallets') }, 'จัดการ', uiIcon('chevR', 15))),
+    h('div', { class: 'rail' }, cards));
+}
+
+// สรุปเดือน: แถบสีต่อกันตามหมวด (สีเดียวกับไอคอนหมวด) + รายการหมวด
+function monthCard(sm) {
+  const [, mo] = sm.month.split('-').map(Number);
+  const cats = sm.expenseByCategory;
+  const tot = cats.reduce((s, c) => s + c.amount, 0) || 1;
+  const top = cats.slice(0, 5);
+  const rest = round2(cats.slice(5).reduce((s, c) => s + c.amount, 0));
+  const segs = top.map((c) => ({ name: c.category, amount: c.amount, hue: catHue(c.category) }));
+  if (rest > 0) segs.push({ name: 'อื่น ๆ', amount: rest, hue: null });
+  return h('section', { class: 'card month' },
+    h('div', { class: 'sec-head' }, h('h2', null, TH_MONTHS_FULL[mo - 1]),
+      h('span', { class: 'm-io num' }, h('span', { 'data-flash': '' }, 'รับ ', tw('inc', Number(sm.incomeTotal || 0), 'pos')))),
+    h('div', { class: 'm-big num', 'data-flash': '' }, h('small', null, 'ใช้ไป ฿'), tw('exp', Number(sm.expenseTotal || 0))),
+    cats.length ? [
+      h('div', { class: 'stackbar', 'aria-hidden': 'true' },
+        h('span', { class: 'sb-in', 'data-bar': 'month', 'data-w': 100 },
+          segs.map((s) => h('i', { style: `flex:${s.amount};` + (s.hue === null ? '' : `--h:${s.hue}`), class: s.hue === null ? 'rest' : null })))),
+      h('ul', { class: 'legend' }, segs.map((s) => h('li', null,
+        h('span', { class: 'lg-dot' + (s.hue === null ? ' rest' : ''), style: s.hue === null ? null : `--h:${s.hue}` }),
+        h('span', { class: 'lg-name' }, s.name),
+        h('span', { class: 'lg-pct num' }, Math.round(s.amount / tot * 100) + '%'),
+        h('b', { class: 'num' }, money(s.amount)))))
+    ] : h('p', { class: 'muted' }, 'ยังไม่มีรายจ่ายเดือนนี้'));
 }
 
 function txBadge(t) {
   const kind = (t.type || '').toLowerCase();
   const key = t.type === 'Transfer' ? 'transfer' : catIconKey(t.category);
-  const box = h('span', { class: 'tx-ico ' + kind, 'aria-hidden': 'true' });
+  const box = h('span', { class: 'tx-ico ' + kind, 'aria-hidden': 'true', style: t.type === 'Transfer' ? null : `--h:${catHue(t.category)}` });
   if (key) box.append(svgIcon(key, 17));
   else box.append(catInitial(t.category));
   return box;
@@ -696,7 +756,7 @@ function groupByDay(items) {
   return groups.map((g) => {
     const dayExp = round2(g.items.filter((t) => t.type === 'Expense').reduce((s, t) => s + share(t), 0));
     const y = g.d.slice(0, 4) !== String(new Date().getFullYear()) ? ' ' + g.d.slice(0, 4) : '';
-    return h('section', { class: 'card day-card' },
+    return h('section', { class: 'card day-card', id: 'day-' + g.d },
       h('div', { class: 'day' }, h('span', null, dayLabel(g.d) + y), dayExp ? h('span', { class: 'num' }, 'จ่าย ' + money(dayExp)) : null),
       h('ul', { class: 'tx-list' }, g.items.map((t) => txItem(t, { del: true }))));
   });
@@ -704,10 +764,14 @@ function groupByDay(items) {
 
 function renderList() {
   const el = $('#v-list');
-  const head = h('div', { class: 'month-nav' },
-    h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'เดือนก่อน', onclick: () => moveMonth(-1) }, uiIcon('chevL', 20)),
-    h('strong', null, monthLabel(S.month)),
-    h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'เดือนถัดไป', onclick: () => moveMonth(1) }, uiIcon('chevR', 20)));
+  const [yy, mm] = S.month.split('-').map(Number);
+  const head = h('header', { class: 'v-head month-nav' },
+    h('div', null,
+      h('div', { class: 'eyebrow' }, 'รายการ · ' + yy),
+      h('strong', { class: 'v-title' }, TH_MONTHS_FULL[mm - 1])),
+    h('div', { class: 'mn-btns' },
+      h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'เดือนก่อน', onclick: () => moveMonth(-1) }, uiIcon('chevL', 20)),
+      h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'เดือนถัดไป', onclick: () => moveMonth(1) }, uiIcon('chevR', 20))));
   const input = h('input', { class: 'search-in', id: 'search', type: 'search', enterkeyhint: 'search', autocomplete: 'off',
     placeholder: 'ค้นหา เช่น grab, กาแฟ, 55', value: S.q || '', 'aria-label': 'ค้นหารายการ' });
   const clear = h('button', { type: 'button', class: 'search-x', 'aria-label': 'ล้างคำค้น', hidden: !S.q }, uiIcon('close', 16));
@@ -743,9 +807,35 @@ function fillListResults() {
   }
   const exp = round2(items.filter((t) => t.type === 'Expense').reduce((s, t) => s + share(t), 0));
   box.replaceChildren(
-    h('p', { class: 'muted list-sum' }, `${items.length} รายการ · รายจ่ายรวม `, h('b', { class: 'num neg' }, tw('lexp:' + S.month, exp))),
+    dayBars(items, exp),
     ...groupByDay(items));
   return true;
+}
+
+// กราฟแท่งรายจ่ายรายวันของเดือน แตะแท่งแล้วเลื่อนไปวันนั้น
+function dayBars(items, exp) {
+  const [y, m] = S.month.split('-').map(Number);
+  const dim = new Date(y, m, 0).getDate();
+  const per = Array(dim + 1).fill(0);
+  for (const t of items) if (t.type === 'Expense') per[Number(normDT(t.dateTime).slice(8, 10))] += share(t);
+  const max = Math.max(1, ...per);
+  const today = ymdOf(new Date());
+  const days = [];
+  for (let d = 1; d <= dim; d++) days.push(d);
+  const avg = exp / Math.max(1, S.month === curMonth() ? new Date().getDate() : dim);
+  return h('section', { class: 'card daybars' },
+    h('div', { class: 'db-head' },
+      h('div', null, h('span', { class: 'eyebrow' }, 'ใช้ไปทั้งเดือน'), h('div', { class: 'm-big num' }, h('small', null, '฿'), tw('lexp:' + S.month, exp))),
+      h('div', { class: 'db-meta num' }, `${items.length} รายการ`, h('br'), `เฉลี่ย ${money(Math.round(avg))}/วัน`)),
+    h('div', { class: 'db-bars', style: `--n:${dim}` }, days.map((d) => {
+      const ymd = `${S.month}-${pad(d)}`;
+      const v = per[d];
+      return h('button', { type: 'button', class: 'db' + (ymd === today ? ' today' : '') + (v ? '' : ' zero'), style: `--v:${(v / max).toFixed(3)};--d:${d}`,
+        'aria-label': `${d} ${TH_MONTHS[m - 1]} จ่าย ${money(v)}`,
+        onclick: () => { const sec = document.getElementById('day-' + ymd); if (sec) { buzz(5); sec.scrollIntoView({ behavior: reduceMotion() ? 'auto' : 'smooth', block: 'start' }); springEl(sec, [{ transform: 'scale(.985)' }, { transform: 'scale(1)' }], 320); } else toast(`${d} ${TH_MONTHS[m - 1]} ไม่มีรายจ่าย`); } },
+        h('i'));
+    })),
+    h('div', { class: 'db-axis num', 'aria-hidden': 'true' }, h('span', null, '1'), h('span', null, String(Math.ceil(dim / 2))), h('span', null, String(dim))));
 }
 
 function fillSearch(box, words) {
@@ -864,10 +954,12 @@ function renderWallets() {
         ? h('p', { class: 'hint' }, w.difference < 0 ? 'เงินจริงน้อยกว่าในระบบ อาจมีรายจ่ายที่ลืมจด' : 'เงินจริงมากกว่าในระบบ อาจมีรายรับที่ลืมจด หรือจดรายจ่ายเกิน')
         : null,
       h('div', { class: 'row' }, h('div', { class: 'field' }, h('span', { class: 'lbl' }, 'ชื่อกระเป๋า'), newName), renBtn));
-    const sum = h('summary', { 'data-flash': '' }, h('span', { class: 'name' }, w.name), diff,
+    const lk = walletLook(w);
+    const sum = h('summary', { 'data-flash': '' }, h('span', { class: 'w-ico' }, svgIcon(lk.ico, 18)),
+      h('span', { class: 'name' }, w.name, lk.lbl !== w.name ? h('small', null, lk.lbl) : null), diff,
       tw('ww:' + w.name, Number(w.balance || 0), 'num' + (w.balance < 0 ? ' neg' : '')),
       h('span', { class: 'chev', 'aria-hidden': 'true' }, uiIcon('chevR', 17)));
-    const det = h('details', { class: 'wallet', open: S.openWallets.has(w.name),
+    const det = h('details', { class: 'wallet', style: `--wh:${lk.h}`, open: S.openWallets.has(w.name),
       ontoggle: (e) => {
         if (e.target.open) {
           S.openWallets.add(w.name);
@@ -894,11 +986,13 @@ function renderWallets() {
     await api('addWallet', { name: addName.value.trim(), type: addType.value, opening: 0 }); toast('เพิ่มกระเป๋าแล้ว');
   }, ['add:name']);
 
+  const allTotal = round2(wallets().reduce((s, w) => s + Number(w.balance || 0), 0));
   const els = [
+    h('header', { class: 'v-head' }, h('div', { class: 'eyebrow' }, `${wallets().length} กระเป๋า · รวม ฿${money(allTotal)}`), h('h1', { class: 'v-title' }, 'กระเป๋า')),
+    h('section', null, cards),
     h('section', { class: 'card' }, h('h2', null, 'วันเริ่มใช้แอพ'),
       h('p', { class: 'hint' }, 'ยอดคงเหลือนับเฉพาะรายการตั้งแต่วันนี้ ใส่ยอดตั้งต้นของทุกกระเป๋าเป็นยอดจริงตอนเช้าของวันนั้น'),
       h('div', { class: 'row' }, h('div', { class: 'field' }, startInput), startBtn)),
-    h('section', null, h('h2', null, 'กระเป๋าของฉัน'), cards),
     h('section', { class: 'card' }, h('h2', null, 'เพิ่มกระเป๋า'),
       h('div', { class: 'stack' }, addName, addType, addBtn)),
     h('section', { class: 'stack' }, h('h2', null, 'อื่น ๆ'),
@@ -1237,6 +1331,7 @@ const ICONS = {
   refund: { h: 175, d: '<path d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3L4.5 9"/><path d="M4.5 4.5V9H9"/>' },
   transfer: { h: 225, d: '<path d="M4.5 8.5h15l-3.5-3.5M19.5 15.5h-15L8 19"/>' },
   saving: { h: 150, d: '<ellipse cx="12" cy="6.5" rx="6.8" ry="2.5"/><path d="M5.2 6.5v5.2c0 1.4 3 2.5 6.8 2.5s6.8-1.1 6.8-2.5V6.5"/><path d="M5.2 11.7V17c0 1.4 3 2.5 6.8 2.5s6.8-1.1 6.8-2.5v-5.3"/>' },
+  bank: { h: 218, d: '<path d="M3.5 9.5 12 4.5l8.5 5"/><path d="M5.5 10v7M10 10v7M14 10v7M18.5 10v7M3.5 19.5h17"/>' },
   more: { h: 220, d: '<circle cx="6.5" cy="12" r="1.3" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.3" fill="currentColor" stroke="none"/><circle cx="17.5" cy="12" r="1.3" fill="currentColor" stroke="none"/>' },
   plus: { h: 220, d: '<path d="M12 5.5v13M5.5 12h13"/>' }
 };
@@ -1269,6 +1364,13 @@ function catIconKey(name) {
   for (const [re, key] of CAT_ICON_RULES) if (re.test(name || '')) return key;
   return null;
 }
+function catHue(name) {
+  const key = catIconKey(name);
+  if (key) return ICONS[key].h;
+  let hue = 0;
+  for (const ch of String(name || '')) hue = (hue * 31 + ch.codePointAt(0)) % 360;   // หมวดเดิมได้สีเดิมเสมอ
+  return hue;
+}
 function catInitial(name) {
   return (String(name || '?').trim().replace(/^[เแโใไ]+/, '') || '?').slice(0, 1);   // ข้ามสระหน้า
 }
@@ -1281,7 +1383,7 @@ function svgIcon(key, size) {
 // ไอคอนกะทัดรัดบนป้ายเลือกหมวดในแผ่นจด: เส้นหมึกเรียบคม ไม่ใช้สีรุ้งพาสเทล
 function catPillIcon(name, key) {
   key = key || catIconKey(name);
-  const box = h('span', { class: 'ci-s', 'aria-hidden': 'true' });
+  const box = h('span', { class: 'ci-s', 'aria-hidden': 'true', style: name ? `--h:${catHue(name)}` : null });
   if (key) box.append(svgIcon(key, 16));
   else box.append(h('b', null, catInitial(name)));
   return box;
@@ -1732,9 +1834,9 @@ $('#sheet').addEventListener('focusout', () => {
     ticking = true;
     requestAnimationFrame(() => {
       const y = window.scrollY;
-      const fab = $('#btn-add');
-      if (y > lastY + 6 && y > 120) fab.classList.add('tuck');
-      else if (y < lastY - 6 || y < 40) fab.classList.remove('tuck');
+      const dock = $('.dock');
+      if (y > lastY + 6 && y > 120) dock.classList.add('mini');
+      else if (y < lastY - 6 || y < 40) dock.classList.remove('mini');
       $('.top').classList.toggle('scrolled', y > 4);
       lastY = y; ticking = false;
     });

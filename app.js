@@ -1038,6 +1038,7 @@ function showSheet() {
   s.hidden = false;
   document.body.style.overflow = 'hidden';
   document.body.classList.add('sheet-open');
+  if (!$('#toast').hidden) hideToast();   // แจ้งเตือนเก่าจะไปบังช่องตัวเลข
   if (!(history.state && history.state.ttmSheet)) { try { history.pushState({ ttmSheet: 1 }, ''); } catch (e) { /* ignore */ } }
   if (S.revealNext) { S.revealNext = false; s.classList.add('reveal'); return; }   // เปิดด้วยวงกิโยเช่ (openWithBurst จัดการ animation เอง)
   if (!reduceMotion()) {
@@ -1160,12 +1161,24 @@ function baseItem(f) {
   return it;
 }
 
+// ข้อความ → ส่วนที่ต้องแก้ (สั่นให้เห็นว่าต้องไปแก้ตรงไหน)
+const ERR_TARGET = { 'เลือกหมวดก่อน': '.cat-flow', 'เลือกกระเป๋าก่อน': '[data-wgroup="main"]', 'เลือกกระเป๋าปลายทาง': '[data-wgroup="to"]' };
 function showEntryError(msg) {
   const el = $('#entry-err');
   if (!el) return;
   el.textContent = msg; el.hidden = false;
-  const d = $('#amount-display');
-  if (d && !reduceMotion() && d.animate) {
+  const rm = reduceMotion() || !el.animate;
+  if (!rm) el.animate([{ opacity: 0, transform: 'translate3d(-8px, 0, 0) scale(.92)' }, { opacity: 1, transform: 'none' }], { duration: 260, easing: 'cubic-bezier(.3, 1.35, .6, 1)' });
+  const sel = ERR_TARGET[msg];
+  const sec = sel && $('#sheet ' + sel) && $('#sheet ' + sel).closest('.sec');
+  if (sec) {
+    sec.classList.remove('need'); void sec.offsetWidth; sec.classList.add('need');
+    setTimeout(() => sec.classList.remove('need'), 1600);
+    const sc = $('.sheet-scroll'), sr = sec.getBoundingClientRect(), cr = sc.getBoundingClientRect();
+    if (sr.top < cr.top || sr.bottom > cr.bottom) sec.scrollIntoView({ block: 'nearest', behavior: rm ? 'auto' : 'smooth' });
+  }
+  const d = sec || $('#amount-display');
+  if (d && !rm) {
     d.animate([
       { transform: 'translate3d(0, 0, 0)' },
       { transform: 'translate3d(-7px, 0, 0)', offset: 0.2 },
@@ -1182,15 +1195,139 @@ function reopenWithError(saved, msg) {
   showEntryError(msg);
 }
 
+// ------------------------------------------------------------ animation ตอนกดบันทึก (แยกตามชนิด)
+// รายจ่าย: ตัวเลขสลายเป็นผงแล้วลอยเข้าแถบ "รายจ่าย"   รายรับ: ฿ กลืนตัวเลขทีละตัวแล้วลอยเข้ากระเป๋าที่เลือก
+// โอนย้าย: ตัวเลขหมุนเรียงเป็นวงแล้วถูกดูดเข้าแถบ "โอนย้าย"
+// ตัวเลขจริงอยู่ในกล่องที่ตัดขอบ จึงก๊อปแต่ละตัวไปไว้ในชั้นลอย (.fx-layer) ที่ตำแหน่งเดิมก่อนค่อยขยับ (transform/opacity ล้วน)
+function saveFx(type) {
+  return new Promise((resolve) => {
+    const disp = $('#amount-display'), sheet = $('#sheet');
+    const amtEl = disp && disp.querySelector('.amt'), cur = disp && disp.querySelector('small');
+    if (reduceMotion() || !amtEl || !cur || !document.body.animate) { resolve(); return; }
+    S.fxBusy = true;
+    sheet.classList.add('saving');
+    const layer = h('div', { class: 'fx-layer', 'aria-hidden': 'true' });
+    document.body.append(layer);
+    const cs = getComputedStyle(amtEl), color = cs.color;
+    amtEl.replaceChildren(...[...amtEl.textContent].map((ch) => h('span', null, ch)));   // แยกเป็นตัว ๆ เพื่อวัดตำแหน่ง
+    // ก๊อปฟอนต์ทีละค่า (ค่าย่อ font ของตัวเลข tabular จะคืนค่าว่าง ทำให้ตัวก๊อปเล็กผิดขนาด)
+    const fontOf = (el) => { const c = getComputedStyle(el); return `font-family:${c.fontFamily};font-size:${c.fontSize};font-weight:${c.fontWeight};letter-spacing:${c.letterSpacing};opacity:${c.opacity}`; };
+    const clone = (el, font, parent, ox, oy) => {
+      const r = el.getBoundingClientRect();
+      const c = h('span', { class: 'fx-ch num', style: `left:${r.left - (ox || 0)}px;top:${r.top - (oy || 0)}px;width:${r.width}px;height:${r.height}px;${font};color:${color}` }, el.textContent);
+      (parent || layer).append(c);
+      return { el: c, r, x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    };
+    const center = (el) => { const r = el.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; };
+    const pop = (el, delay) => el && el.animate([{ transform: 'scale(1)' }, { transform: 'scale(.9)', offset: 0.3 }, { transform: 'scale(1.08)', offset: 0.65 }, { transform: 'scale(1)' }],
+      { duration: 320, delay, easing: 'ease-out' });
+    const segBtn = (i) => sheet.querySelectorAll('.seg button')[i];
+    let total;
+
+    if (type === 'Income') {
+      const baht = clone(cur, fontOf(cur));
+      const digits = [...amtEl.children].map((sp) => clone(sp, fontOf(amtEl)));
+      disp.style.visibility = 'hidden';
+      const step = Math.min(60, 320 / Math.max(1, digits.length));
+      digits.forEach((d, i) => d.el.animate([
+        { transform: 'none', opacity: 1 },
+        { transform: `translate3d(${(baht.x - d.x).toFixed(1)}px, 0, 0) scale(.2)`, opacity: 0 }
+      ], { duration: 180, delay: i * step, easing: 'cubic-bezier(.5, 0, .75, 0)', fill: 'forwards' }));
+      // ฿ งับทีละคำ (ลำดับเฟรมเดียว ไม่ให้ animation ทับกันเอง)
+      const T1 = (digits.length - 1) * step + 180 + 80;
+      const bites = [{ offset: 0, transform: 'scale(1)' }];
+      digits.forEach((d, i) => {
+        const t = (i * step + 150) / T1;
+        bites.push({ offset: Math.min(0.97, t), transform: 'scale(1.28) rotate(-7deg)' });
+        bites.push({ offset: Math.min(0.99, t + Math.min(step, 80) / T1 * 0.6), transform: 'scale(1.04)' });
+      });
+      bites.push({ offset: 1, transform: 'scale(1.12)' });
+      bites.sort((a, b) => a.offset - b.offset).forEach((k, i, arr) => { if (i && k.offset <= arr[i - 1].offset) k.offset = Math.min(1, arr[i - 1].offset + 0.001); });
+      baht.el.animate(bites, { duration: T1, fill: 'forwards' });
+      // อิ่มแล้วลอยเข้ากระเป๋าที่เลือก (ถ้ามองไม่เห็นกระเป๋า: หย่อนลงแล้วจางไป)
+      const chip = sheet.querySelector('[data-wgroup="main"] .chip[aria-pressed="true"]');
+      const kp = sheet.querySelector('.keypad');
+      const cr = chip && chip.getBoundingClientRect();
+      const ok = cr && cr.top > 0 && cr.bottom < (kp ? kp.getBoundingClientRect().top : innerHeight);
+      const to = ok ? center(chip) : { x: baht.x, y: baht.y + 90 };
+      const wrap = h('span', { class: 'fx-wrap', style: 'left:0;top:0' });
+      layer.append(wrap); wrap.append(baht.el);
+      wrap.animate([
+        { transform: 'translate3d(0, 0, 0)', opacity: 1 },
+        { transform: `translate3d(${((to.x - baht.x) * 0.45).toFixed(1)}px, ${((to.y - baht.y) * 0.45 - 34).toFixed(1)}px, 0)`, offset: 0.5 },
+        { transform: `translate3d(${(to.x - baht.x).toFixed(1)}px, ${(to.y - baht.y).toFixed(1)}px, 0) scale(.3)`, opacity: 0 }
+      ], { duration: 380, delay: T1, easing: 'cubic-bezier(.45, 0, .55, 1)', fill: 'forwards' });
+      if (ok) pop(chip, T1 + 340);
+      total = T1 + 380 + (ok ? 160 : 0);
+    } else if (type === 'Transfer') {
+      const C = center(amtEl);
+      const wrap = h('span', { class: 'fx-wrap', style: `left:${C.x}px;top:${C.y}px` });
+      layer.append(wrap);
+      const chars = [cur, ...amtEl.children].map((el) => clone(el, fontOf(el === cur ? cur : amtEl), wrap, C.x, C.y));
+      disp.style.visibility = 'hidden';
+      const n = chars.length, R = Math.max(54, n * 11);   // วงกว้างพอให้ตัวเลขขนาดจริงเรียงรอบไม่ชนกัน
+      chars.forEach((c, i) => {
+        const a = (i / n) * Math.PI * 2 - Math.PI / 2;
+        const tx = Math.cos(a) * R - (c.x - C.x), ty = Math.sin(a) * R - (c.y - C.y);
+        c.el.animate([
+          { transform: 'none' },
+          { transform: `translate3d(${tx.toFixed(1)}px, ${ty.toFixed(1)}px, 0) rotate(${(a * 180 / Math.PI + 90).toFixed(0)}deg) scale(.62)`, offset: 0.5 },
+          { transform: `translate3d(${tx.toFixed(1)}px, ${ty.toFixed(1)}px, 0) rotate(${(a * 180 / Math.PI + 90).toFixed(0)}deg) scale(.62)` }
+        ], { duration: 780, easing: 'cubic-bezier(.2, 0, 0, 1)', fill: 'forwards' });
+      });
+      const T = center(segBtn(2));
+      wrap.animate([
+        { transform: 'rotate(0deg) scale(1)', opacity: 1, easing: 'cubic-bezier(.2, 0, .3, 1)' },
+        { transform: 'rotate(260deg) scale(1)', opacity: 1, offset: 0.52, easing: 'cubic-bezier(.6, 0, .9, .4)' },   // ช่วงหลังเร่ง = ถูกดูด
+        { transform: `translate3d(${(T.x - C.x).toFixed(1)}px, ${(T.y - C.y).toFixed(1)}px, 0) rotate(760deg) scale(.04)`, opacity: 0.5 }
+      ], { duration: 780, fill: 'forwards' });
+      pop(segBtn(2), 720);
+      total = 780 + 200;
+    } else {
+      const T = center(segBtn(0));
+      const chars = [cur, ...amtEl.children].map((el) => clone(el, fontOf(el === cur ? cur : amtEl)));
+      disp.style.visibility = 'hidden';
+      let last = 0;
+      chars.forEach((c, i) => {
+        c.el.animate([{ opacity: 1, transform: 'none' }, { opacity: 0, transform: 'translate3d(0, -4px, 0) scale(.55)' }],
+          { duration: 240, delay: i * 35, easing: 'ease-in', fill: 'forwards' });
+        const parts = c.r.width < 14 ? 4 : 7;
+        for (let k = 0; k < parts; k++) {
+          const sx = c.r.left + Math.random() * c.r.width, sy = c.r.top + c.r.height * (0.2 + Math.random() * 0.65);
+          const sz = 3 + Math.random() * 3.5;
+          const dot = h('i', { class: 'fx-dot', style: `left:${sx.toFixed(1)}px;top:${sy.toFixed(1)}px;width:${sz.toFixed(1)}px;height:${sz.toFixed(1)}px;background:${color}` });
+          layer.append(dot);
+          const dx = T.x - sx, dy = T.y - sy;
+          const mx = dx * 0.35 + (Math.random() - 0.5) * 70, my = dy * 0.35 - 24 - Math.random() * 46;   // โค้งขึ้นเหมือนผงลอย
+          const dur = 540 + Math.random() * 150, delay = i * 35 + Math.random() * 90;
+          last = Math.max(last, dur + delay);
+          dot.animate([
+            { transform: 'translate3d(0, 0, 0) scale(.6)', opacity: 0 },
+            { transform: 'translate3d(0, 0, 0) scale(1)', opacity: 1, offset: 0.08 },
+            { transform: `translate3d(${mx.toFixed(1)}px, ${my.toFixed(1)}px, 0) scale(1.1)`, opacity: 0.95, offset: 0.48 },
+            { transform: `translate3d(${dx.toFixed(1)}px, ${dy.toFixed(1)}px, 0) scale(.3)`, opacity: 0.25 }
+          ], { duration: dur, delay, easing: 'cubic-bezier(.45, 0, .25, 1)', fill: 'forwards' });
+        }
+      });
+      pop(segBtn(0), last - 120);
+      total = last + 200;
+    }
+    buzz(8);
+    const done = () => { if (!S.fxBusy) return; S.fxBusy = false; layer.remove(); sheet.classList.remove('saving'); disp.style.visibility = ''; resolve(); };
+    setTimeout(done, Math.min(total, 1300));
+  });
+}
+
 async function submitEntry() {
   const f = S.form;
-  if (!f || !sheetOpen()) return;
+  if (!f || !sheetOpen() || S.fxBusy) return;
   const problem = validate(f);
   if (problem) { showEntryError(problem); return; }
   if (f.wallet && f.type !== 'Transfer' && f.category) { const m = LS.get('ttm_catWallet', {}); m[f.category.trim()] = f.wallet; LS.set('ttm_catWallet', m); }
   if (f.timeNow) f.dateTime = f.dateTime.slice(0, 11) + nowHM();   // 'ตอนนี้' = เวลาตอนกดบันทึก
   const saved = { ...f };
   buzz(12);
+  await saveFx(f.type);              // เล่น animation ตามชนิดก่อนปิดแผ่นจด
 
   if (f.editId) {
     // แก้ไข: โชว์ผลทันที ถ้า server ไม่รับค่อยย้อนกลับ
@@ -1268,6 +1405,7 @@ async function deleteTx(tx) {
 }
 
 function keyPress(k) {
+  if (S.fxBusy) return;
   const f = S.form;
   const prev = f.amount;
   let a = prev;
@@ -1567,9 +1705,12 @@ function renderSheet() {
 
   const body = [];
   // วันเวลา: แสดงเป็นปุ่มเดียว แตะแล้วกางให้เลือก
-  body.push(h('button', { type: 'button', class: 'when-pill' + (f.whenOpen ? ' open' : ''), 'aria-expanded': String(!!f.whenOpen),
-    onclick: () => set({ whenOpen: !f.whenOpen }, true, !f.whenOpen ? { panel: '.when-panel' } : null) },
-    uiIcon('clock', 15), h('span', { class: 'when-txt' }, whenLabel(f)), h('span', { class: 'chev', 'aria-hidden': 'true' }, uiIcon('chevR', 14))));
+  // แถวบนสุด: ปุ่มวันเวลา + กล่องแจ้งเตือน (เห็นทันทีโดยไม่ต้องเลื่อนลงไปหา)
+  body.push(h('div', { class: 'when-row' },
+    h('button', { type: 'button', class: 'when-pill' + (f.whenOpen ? ' open' : ''), 'aria-expanded': String(!!f.whenOpen),
+      onclick: () => set({ whenOpen: !f.whenOpen }, true, !f.whenOpen ? { panel: '.when-panel' } : null) },
+      uiIcon('clock', 15), h('span', { class: 'when-txt' }, whenLabel(f)), h('span', { class: 'chev', 'aria-hidden': 'true' }, uiIcon('chevR', 14))),
+    h('p', { class: 'err', id: 'entry-err', role: 'alert', hidden: true })));
   if (f.whenOpen) body.push(whenPanel(f, set));
 
   // ปุ่มจดเร็ว
@@ -1666,7 +1807,6 @@ function renderSheet() {
     }
   }
   if (f.editId) body.push(h('button', { type: 'button', class: 'btn danger', onclick: deleteEntry }, 'ลบรายการนี้'));
-  body.push(h('p', { class: 'err', id: 'entry-err', hidden: true }));
 
   body.forEach((el, i) => { if (el && el.style) el.style.setProperty('--si', Math.min(i, 6)); });
 

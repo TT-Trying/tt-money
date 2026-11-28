@@ -471,6 +471,14 @@ h2 { font-size: 15px; font-weight: 700; margin: 0 0 8px; color: var(--text); let
   will-change: transform, opacity;   /* วาดครั้งเดียว แล้วให้ GPU ขยาย/หมุน/จาง */
 }
 
+/* ---------- animation ตอนบันทึก ---------- */
+.fx-layer { position: fixed; inset: 0; z-index: 31; pointer-events: none; }
+.fx-ch { position: fixed; display: grid; place-items: center; line-height: 1; white-space: pre; }
+.fx-wrap { position: fixed; width: 0; height: 0; }
+.fx-wrap > .fx-ch { position: absolute; }
+.fx-dot { position: fixed; margin: -2px 0 0 -2px; border-radius: 50%; }
+.sheet.saving { pointer-events: none; }
+
 /* ---------- ดึงลงเพื่อรีเฟรช ---------- */
 .ptr {
   position: fixed; z-index: 8; left: 50%; top: calc(env(safe-area-inset-top) + 8px);
@@ -604,6 +612,21 @@ h2 { font-size: 15px; font-weight: 700; margin: 0 0 8px; color: var(--text); let
 .toggle input { width: 20px; height: 20px; accent-color: var(--ink); }
 .hint { font-size: 13px; color: var(--muted); margin: 0; }
 .err { font-size: 14px; color: var(--red); font-weight: 500; margin: 0; }
+
+/* แถวบน: ปุ่มวันเวลา + กล่องแจ้งเตือน */
+.when-row { display: flex; align-items: center; gap: 8px; min-height: 40px; }
+.when-row .when-pill { flex: none; }
+.when-row .err {
+  flex: 1; min-width: 0; display: flex; align-items: center; gap: 7px;
+  padding: 7px 11px; border-radius: 14px; font-size: 13px; font-weight: 600; line-height: 1.3;
+  background: var(--red-soft); color: var(--red); border: 1px solid color-mix(in srgb, var(--red) 28%, transparent);
+}
+.when-row .err::before {
+  content: "!"; flex: none; width: 18px; height: 18px; border-radius: 50%; display: grid; place-items: center;
+  background: var(--red); color: #fff; font-size: 12px; font-weight: 800;
+}
+.sec.need > .lbl { color: var(--red); }
+.sec.need .cat-pill:not(.ghost), .sec.need .chip { border-color: color-mix(in srgb, var(--red) 55%, var(--line)); }
 
 /* วันเวลา */
 .when-pill {

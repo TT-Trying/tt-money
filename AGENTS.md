@@ -25,6 +25,7 @@
 | `backend/Code.gs` | API บน Google Apps Script ดู `backend/README.md` |
 | `docs/SETUP_GUIDE_TH.md` | คู่มือให้เพื่อนติดตั้งเอง (เขียนให้โหลดไปให้ AI สอนได้) |
 | `tools/build-demo.py`, `tools/demo-prelude.js` | สร้าง `demo.html` ที่ใช้ backend จำลอง ไว้ทดสอบ |
+| `tools/perf-check.js` | วัดความลื่น (เฟรมสะดุด + animation ที่ไม่ได้วิ่งบน GPU) |
 
 ## กฎที่ต้องทำทุกครั้ง ⚠️
 1. **แก้ไฟล์หน้าแอพเมื่อไหร่ ให้เพิ่มเลข `CACHE` ใน `sw.js`** (เช่น `ttm-v5` → `ttm-v6`) และเพิ่ม `APP_VERSION` ใน `app.js`
@@ -57,6 +58,15 @@
 - ไอคอนหมวด: `ICONS` (SVG เส้น + hue) และ `CAT_ICON_RULES` (regex ชื่อหมวด → ไอคอน, ข้อแรกที่ตรงชนะ) เพิ่มหมวดใหม่ให้เพิ่มกฎตรงนี้
 
 **ฟีเจอร์ที่มีอยู่:** หน้าภาพรวม (ยอดรวม, งบวันนี้ = (เงินใช้ได้ + ที่จ่ายวันนี้) ÷ วันที่เหลือในเดือน, กระเป๋า, สรุปเดือน, ล่าสุด), หน้ารายการ (เปลี่ยนเดือน/ปัดซ้ายขวา, ค้นหาเดือนนี้หรือ 12 เดือน, ปุ่มลบกด 2 ครั้ง), หน้ากระเป๋า (ยอดตั้งต้น, เทียบยอดจริง, เปลี่ยนชื่อ, เพิ่มกระเป๋า), แผ่นจด (keypad, ปุ่มจดเร็ว, เลือกวันเวลาแบบจิ้ม/พิมพ์, หาร, เติมจากกระเป๋าอื่น), ดึงลงเพื่อรีเฟรช, sync ทุก 60 วิ
+
+## ความลื่น (ตรวจแล้วใน v2 ด้วย `tools/perf-check.js`)
+- **animate ได้แค่ `transform` กับ `opacity`** สองตัวนี้วิ่งบน GPU ลื่นทุก refresh rate แม้ CPU กำลังยุ่ง
+  ห้าม animate `border-radius`, `background-color`, `height`/`width`, `box-shadow`, `filter` ของพื้นที่ใหญ่ เพราะต้องวาดใหม่ทุกเฟรม
+  (ยกเว้นที่รู้แล้วว่าเล็ก: วงแหวน `stroke-dashoffset` 128px, สีตัวเลขในแผ่นจด)
+- **ห้าม animation วนไม่รู้จบ** ยกเว้น spinner ตอนโหลด (บนจอ 120Hz GPU ต้องวาดทุกเฟรม เปลืองแบต)
+- **กดแล้วต้องสร้างหน้าใหม่: ให้ animation เริ่มก่อน แล้วค่อยสร้างหน้าใน `afterPaint()`** (ดู `go()` และ `submitEntry`)
+- อย่าใส่ `will-change` ให้ของที่มีหลายชิ้น (ทุกแถว/ทุกตัวเลข) จะกินหน่วยความจำ GPU
+- เช็คด้วย `node tools/perf-check.js "$PWD/demo.html" 4` ทั้งก่อนและหลังแก้ UI
 
 ## Backend (`backend/Code.gs`)
 - Apps Script ผูกกับ Google Sheet, deploy เป็น Web app (Execute as: Me, Access: Anyone) ทุกคำขอต้องมี token

@@ -414,6 +414,12 @@ function skeleton(kind) {
 }
 
 // ------------------------------------------------------------ navigation / render
+// ทำงานหนัก (สร้างหน้าใหม่) หลังเบราว์เซอร์วาดเฟรมถัดไปแล้ว:
+// animation ที่วิ่งบน GPU (แถบเมนู, แผ่นจดเลื่อนลง) จะเริ่มทันทีที่แตะ ไม่ต้องรอ CPU สร้างหน้าเสร็จ
+function afterPaint(fn) {
+  if (reduceMotion()) { fn(); return; }
+  requestAnimationFrame(() => setTimeout(fn, 0));
+}
 function go(view) {
   $('.dock').classList.remove('mini');
   if (view === S.view && !$('#v-' + view).hidden) { window.scrollTo({ top: 0, behavior: reduceMotion() ? 'auto' : 'smooth' }); return; }
@@ -421,8 +427,16 @@ function go(view) {
   S.navDir = a < 0 || b < 0 ? 'up' : (b > a ? 'r' : 'l');
   S.view = view;
   if (view === 'list' && !S.month) S.month = curMonth();
-  window.scrollTo(0, 0);
-  render();
+  document.querySelectorAll('.tab').forEach((t) => {
+    if (t.dataset.view === view) t.setAttribute('aria-current', 'page'); else t.removeAttribute('aria-current');
+  });
+  moveTabInk();                       // แถบเมนูเลื่อนทันที
+  afterPaint(() => {
+    if (S.view !== view) return;      // กดแท็บอื่นต่อเร็ว ๆ: ทำแค่อันล่าสุด
+    window.scrollTo(0, 0);
+    render();
+    if (view === 'list') loadList(S.month, !!S.lists[S.month]);
+  });
   const activeSvg = $(`.tab[data-view="${view}"] svg`);
   if (activeSvg) {
     const hops = view === 'wallets'
@@ -432,7 +446,6 @@ function go(view) {
       : [{ transform: 'translate3d(0, 3px, 0) scale(.82)' }, { transform: 'translate3d(0, -4px, 0) scale(1.16)', offset: 0.5 }, { transform: 'translateY(-1px) scale(1.05)' }];
     springEl(activeSvg, hops, 340, 'cubic-bezier(.28, 1.25, .52, 1)');
   }
-  if (view === 'list') loadList(S.month, !!S.lists[S.month]);
 }
 function moveMonth(k) {
   S.month = shiftMonth(S.month, k);
@@ -1146,7 +1159,7 @@ async function submitEntry() {
     // แก้ไข: โชว์ผลทันที ถ้า server ไม่รับค่อยย้อนกลับ
     const op = { kind: 'update', before: f.orig, after: { ...f.orig, ...baseItem(f), dateTime: normDT(f.dateTime), pending: true }, confirmed: 0 };
     closeSheet();
-    S.ops.push(op); render();
+    S.ops.push(op); afterPaint(() => render());
     S.sending++; updateSync();
     try {
       await api('updateTransaction', { id: f.editId, fields: baseItem(f) });
@@ -1169,7 +1182,7 @@ async function submitEntry() {
   const batch = { clientId: uid(), items };
   closeSheet();                 // ปิดทันที จะได้จดรายการต่อไปเร็ว ๆ
   const op = addOpFromBatch(batch, false);
-  render();                     // ยอดเงิน/สรุป/รายการ อัปเดตทันทีไม่ต้องรอ server
+  afterPaint(() => render());   // ยอดเงิน/สรุป/รายการ อัปเดตทันทีไม่ต้องรอ server (หลังแผ่นจดเริ่มเลื่อนลง)
   toast(`จดแล้ว ${f.type === 'Income' ? '+' : f.type === 'Expense' ? '−' : ''}${money(f.amount)} ${f.note.trim() || f.category || ''}`);
   S.sending++; updateSync();
   try {

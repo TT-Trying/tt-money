@@ -741,7 +741,7 @@ h2 { font-size: 15px; font-weight: 700; margin: 0 0 8px; color: var(--text); let
 .toast button { margin-left: auto; background: none; border: 0; color: inherit; font-weight: 700; text-decoration: underline; }
 .sheet:not([hidden]):not(.closing) ~ .toast { bottom: auto; top: calc(116px + env(safe-area-inset-top)); }
 
-.amt-ch { display: inline-block; will-change: transform, opacity; }
+.amt-ch { display: inline-block; }
 .month-nav strong { display: inline-block; will-change: transform, opacity; }
 #main { transform-origin: center 140px; will-change: transform, opacity; }
 
@@ -749,7 +749,7 @@ h2 { font-size: 15px; font-weight: 700; margin: 0 0 8px; color: var(--text); let
 [data-flash] { position: relative; }
 [data-flash]::before {
   content: ""; position: absolute; inset: -2px -4px; border-radius: inherit;
-  pointer-events: none; opacity: 0; will-change: opacity;
+  pointer-events: none; opacity: 0;
 }
 .hero[data-flash]::before { inset: 0; }
 
@@ -767,19 +767,22 @@ h2 { font-size: 15px; font-weight: 700; margin: 0 0 8px; color: var(--text); let
   /* Transitions เฉพาะ transform / opacity ที่ลื่นทุก refresh rate */
   .top { transition: background-color var(--d2) var(--e-std), border-color var(--d2) ease, transform .34s var(--ease-sheet), opacity .28s ease; }
   .brand { transition: opacity var(--d2) var(--e-std), transform var(--d2) var(--e-std); }
-  #main { transition: transform .4s var(--ease-sheet), opacity .3s ease, border-radius .4s var(--ease-sheet); }
-  body { transition: background-color .3s ease; }
-  body.sheet-open { background: #000; }
-  body.sheet-open #main { transform: scale(.93) translate3d(0, 10px, 0); opacity: .55; border-radius: 26px; }
+  #main { transition: transform .4s var(--ease-sheet), opacity .3s ease; }
+  body::before {
+    content: ""; position: fixed; inset: 0; z-index: -1; background: #000; opacity: 0; pointer-events: none;
+    transition: opacity .3s ease;
+  }
+  body.sheet-open::before { opacity: 1; }
+  body.sheet-open #main { transform: scale(.93) translate3d(0, 10px, 0); opacity: .55; }
   body.sheet-open .top { transform: scale(.95) translate3d(0, -6px, 0); opacity: 0; }
   body.sheet-open .dock { transform: translate3d(0, 140%, 0); }
   .dock { transition: transform .4s var(--ease-sheet); }
   .tabs, .dock .fab { transition: transform var(--d2) var(--e-pop); }
   .tab span { transition: opacity var(--d1) ease; }
-  .ring-fill { transition: stroke-dashoffset .95s var(--e-in), stroke .3s ease; }
+  .ring-fill { transition: stroke-dashoffset .8s var(--e-in), stroke .3s ease; }
   .sb-in { transition: transform .8s var(--e-in); }
-  .hero .guil { animation: guilloche 140s linear infinite; }
-  @keyframes guilloche { to { transform: rotate(360deg); } }
+  .view.enter .hero .guil { animation: guilloche 2.4s var(--e-in) backwards; }
+  @keyframes guilloche { from { transform: rotate(-24deg) scale(.96); opacity: 0; } }
   .db i { animation: bar-up .5s var(--e-in) backwards; animation-delay: calc(var(--d) * 12ms); }
   @keyframes bar-up { from { transform: scaleY(0); } }
   .view.enter .wcard { animation: v-right .46s var(--e-in) backwards; }
@@ -796,7 +799,6 @@ h2 { font-size: 15px; font-weight: 700; margin: 0 0 8px; color: var(--text); let
   }
   .fab svg { transition: transform .28s var(--ease-spring); }
   .fab:active svg, .fab.is-pressed svg { transform: rotate(90deg) scale(.92); }
-  .tab { transition: color .18s ease; }
   .tab svg { transition: transform .3s var(--ease-spring); }
   .tab-ink { transition: transform .38s var(--ease-spring), opacity .18s ease; }
   .tab-ink::before { will-change: transform; }

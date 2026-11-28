@@ -5,7 +5,14 @@ try { Object.keys(localStorage).filter((k) => k.startsWith('ttm_')).forEach((k) 
 window.DEMO = { offline: false, latency: 1000 };
 (function () {
   const p = (n) => String(n).padStart(2, '0');
-  const ago = (days, hm) => { const d = new Date(); d.setDate(d.getDate() - days); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${hm}`; };
+  const ago = (days, hm) => {
+    const d = new Date(); d.setDate(d.getDate() - days);
+    if (days === 0) {   // รายการของวันนี้ห้ามเป็นเวลาในอนาคต (ไม่งั้นจะเรียงอยู่บนรายการที่เพิ่งจด)
+      const n = new Date(Date.now() - 20 * 60000), now = `${p(n.getHours())}:${p(n.getMinutes())}`;
+      if (hm > now) hm = now;
+    }
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${hm}`;
+  };
   const now = new Date();
   const month = `${now.getFullYear()}-${p(now.getMonth() + 1)}`;
   const db = {

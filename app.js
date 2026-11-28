@@ -1034,10 +1034,11 @@ function showSheet() {
   clearTimeout(sheetTimer); clearTimeout(sheetOpenTimer);
   s.style.transform = '';
   $('#main').style.transform = ''; $('#main').style.opacity = '';
-  s.classList.remove('closing', 'dragging', 'snap-back');
+  s.classList.remove('closing', 'dragging', 'snap-back', 'reveal');
   s.hidden = false;
   document.body.style.overflow = 'hidden';
   document.body.classList.add('sheet-open');
+  if (S.revealNext) { S.revealNext = false; s.classList.add('reveal'); return; }   // เปิดด้วยวงกิโยเช่ (openWithBurst จัดการ animation เอง)
   if (!reduceMotion()) {
     s.classList.add('opening');
     sheetOpenTimer = setTimeout(() => s.classList.remove('opening'), 480);
@@ -1872,8 +1873,8 @@ $('#main').addEventListener('focusout', () => {
 document.querySelectorAll('.tab').forEach((b) => b.addEventListener('click', () => { buzz(5); go(b.dataset.view); }));
 $('#btn-add').addEventListener('click', () => { buzz(8); openWithBurst(); });
 
-// กด + : ลายกิโยเช่โผล่จากปุ่ม หมุนขยายจนเต็มจอ แล้วแผ่นจดเลื่อนขึ้นมา
-// ใช้แค่ transform/opacity (วิ่งบน GPU) แผ่นจดสร้างระหว่างที่วงกำลังขยาย จึงไม่สะดุด
+// กด + : ลายกิโยเช่มีศูนย์กลางที่ปุ่ม + ขยายออก และหน้าจดค่อย ๆ เผยออกมาภายในวงพร้อมกัน
+// หน้าจดเผยผ่านช่องวงกลม (clip-path) ส่วนลายขยายตามขอบวงด้วยสูตรเดียวกัน ขอบลายจึงวิ่งไปพร้อมขอบที่เผย
 let bursting = false;
 function openWithBurst() {
   if (bursting || sheetOpen()) return;
@@ -1883,22 +1884,36 @@ function openWithBurst() {
   const r = fab.getBoundingClientRect();
   const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
   const W = window.innerWidth, H = window.innerHeight;
-  // วงลอยจากปุ่ม + ไปกลางจอระหว่างขยาย: ขนาดแค่คลุมจอจากตรงกลาง (เล็กกว่าขยายจากมุมจอ ~3 เท่า เบา GPU)
-  const size = Math.ceil(Math.hypot(W, H) * 1.02);
-  const burst = h('div', { class: 'burst', 'aria-hidden': 'true', style: `width:${size}px;height:${size}px;left:${(W - size) / 2}px;top:${(H - size) / 2}px` },
-    h('i', { class: 'burst-lines' }));
-  document.body.append(burst);
+  const R = Math.ceil(Math.hypot(Math.max(cx, W - cx), Math.max(cy, H - cy)));   // รัศมีที่คลุมมุมจอที่ไกลสุด
   fab.animate([{ transform: 'scale(1)' }, { transform: 'scale(.86)', offset: 0.35 }, { transform: 'scale(1)' }], { duration: 260, easing: 'ease-out' });
-  const s0 = (r.width / size).toFixed(4), dx = (cx - W / 2).toFixed(1), dy = (cy - H / 2).toFixed(1);
-  burst.animate([
-    { transform: `translate(${dx}px, ${dy}px) scale(${s0}) rotate(-180deg)` },
-    { transform: 'translate(0, 0) scale(1) rotate(0deg)' }
-  ], { duration: 560, easing: 'cubic-bezier(.45, 0, .15, 1)', fill: 'forwards' });   // เริ่มช้าพอให้เห็นวงหมุนออกจากปุ่ม แล้วเร่งจนเต็มจอ
-  setTimeout(() => openEntry(null), 420);       // แผ่นจดเลื่อนขึ้นตอนวงเกือบเต็มจอ
-  setTimeout(() => {
-    const fade = burst.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 220, easing: 'ease-in', fill: 'forwards' });
-    fade.onfinish = () => { burst.remove(); bursting = false; };
-  }, 800);
+
+  const DUR = 620, EASE = 'cubic-bezier(.4, 0, .2, 1)';
+  // 1) ลายเริ่มขยายทันทีที่แตะ (GPU)  ลาย: วาดครั้งเดียวที่ 900px แล้วให้ GPU ขยาย
+  //    วงนอกของลาย = 47% ของขนาด ⇒ scale นี้ทำให้ขอบลายเท่าขอบวงที่เผยหน้าจดพอดี
+  const L = 900, k = 0.47 * L;
+  const lines = h('div', { class: 'burst-lines', 'aria-hidden': 'true', style: `width:${L}px;height:${L}px;left:${cx - L / 2}px;top:${cy - L / 2}px` });
+  document.body.append(lines);
+  const a = lines.animate([
+    { transform: `scale(${(r.width / 2 / k).toFixed(4)}) rotate(-140deg)`, opacity: 0 },
+    { opacity: 1, offset: 0.12 },
+    { opacity: 0.85, offset: 0.6 },
+    { transform: `scale(${(R / k).toFixed(4)}) rotate(0deg)`, opacity: 0 }
+  ], { duration: DUR, easing: EASE, fill: 'forwards' });
+  const t0 = performance.now();
+  // 2) เฟรมถัดไปค่อยสร้างหน้าจด แล้วให้ช่องวงกลมกระโดดไปทันเวลาที่ลายขยายไปแล้ว (ยังซิงค์กันพอดี)
+  afterPaint(() => {
+    S.revealNext = true;
+    openEntry(null);
+    const sheet = $('#sheet');
+    const sr = sheet.getBoundingClientRect();
+    const x = (cx - sr.left).toFixed(1), y = (cy - sr.top).toFixed(1);
+    const clip = sheet.animate([
+      { clipPath: `circle(${(r.width / 2).toFixed(1)}px at ${x}px ${y}px)` },
+      { clipPath: `circle(${R}px at ${x}px ${y}px)` }
+    ], { duration: DUR, easing: EASE });
+    clip.currentTime = Math.min(DUR, performance.now() - t0);
+  });
+  a.onfinish = () => { lines.remove(); bursting = false; };   // คง .reveal ไว้จนปิด (เอาออกตอนนี้ แผ่นจดจะเลื่อนขึ้นซ้ำ)
 }
 $('#btn-refresh').addEventListener('click', () => syncNow(false));
 window.addEventListener('online', () => { updateSync(); syncNow(true); });

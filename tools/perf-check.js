@@ -11,7 +11,7 @@ const SCEN = [
   ['เปลี่ยนเดือน', async (p) => { await p.evaluate(() => window.scrollTo(0, 0)); await p.click('.mn-btns .icon-btn >> nth=0'); await p.waitForTimeout(1500); }],
   ['สลับแท็บ กระเป๋า', async (p) => { await p.click('[data-view="wallets"]'); await p.waitForTimeout(900); }],
   ['สลับแท็บ ภาพรวม', async (p) => { await p.click('[data-view="home"]'); await p.waitForTimeout(1400); }],
-  ['เปิดแผ่นจด', async (p) => { await p.click('#btn-add'); await p.waitForTimeout(800); }],
+  ['เปิดแผ่นจด (วงหมุนขยาย)', async (p) => { await p.click('#btn-add'); await p.waitForTimeout(1300); }],
   ['กดเลขในแผ่นจด', async (p) => { for (const k of ['1', '2', '5']) { await p.click(`.keypad button:text-is("${k}")`); await p.waitForTimeout(120); } await p.waitForTimeout(300); }],
   ['กดเลือกหมวด', async (p) => { await p.click('.cat-pill >> nth=1'); await p.waitForTimeout(500); }],
   ['บันทึก + ปิดแผ่นจด + ยอดอัปเดต', async (p) => { await p.click('#entry-save'); await p.waitForTimeout(1600); }],

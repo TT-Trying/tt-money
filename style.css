@@ -462,6 +462,18 @@ h2 { font-size: 15px; font-weight: 700; margin: 0 0 8px; color: var(--text); let
 .dock.mini .tab svg { translate: 0 9px; }   /* (ตัวหนังสือ 16px + ช่องว่าง 2px) ÷ 2 = ไอคอนอยู่กลางปุ่มพอดี */
 .dock.mini .fab { transform: scale(.9) translate3d(0, 6px, 0); }
 
+/* ---------- กด + : วงกิโยเช่หมุนขยายเต็มจอ ---------- */
+.burst {
+  position: fixed; z-index: 19; border-radius: 50%; pointer-events: none; contain: strict;
+  background: radial-gradient(closest-side, var(--hero-b) 0%, var(--hero-a) 70%, #0A1428 100%);
+  transform-origin: 50% 50%;
+  will-change: transform;   /* วาดครั้งเดียวที่ขนาดเต็ม แล้วให้ GPU ย่อขยาย ไม่ต้องวาดใหม่ระหว่างโต */
+}
+.burst-lines {
+  position: absolute; inset: 4%;
+  background: var(--guilloche) center / contain no-repeat; opacity: .3;
+}
+
 /* ---------- ดึงลงเพื่อรีเฟรช ---------- */
 .ptr {
   position: fixed; z-index: 8; left: 50%; top: calc(env(safe-area-inset-top) + 8px);

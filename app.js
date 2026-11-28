@@ -1870,7 +1870,36 @@ $('#main').addEventListener('focusout', () => {
   setTimeout(() => { if (S.deferRender && !isEditingMain()) render({ bg: true }); }, 0);
 });
 document.querySelectorAll('.tab').forEach((b) => b.addEventListener('click', () => { buzz(5); go(b.dataset.view); }));
-$('#btn-add').addEventListener('click', () => { buzz(8); openEntry(null); });
+$('#btn-add').addEventListener('click', () => { buzz(8); openWithBurst(); });
+
+// กด + : ลายกิโยเช่โผล่จากปุ่ม หมุนขยายจนเต็มจอ แล้วแผ่นจดเลื่อนขึ้นมา
+// ใช้แค่ transform/opacity (วิ่งบน GPU) แผ่นจดสร้างระหว่างที่วงกำลังขยาย จึงไม่สะดุด
+let bursting = false;
+function openWithBurst() {
+  if (bursting || sheetOpen()) return;
+  const fab = $('#btn-add');
+  if (reduceMotion() || !document.body.animate) { openEntry(null); return; }
+  bursting = true;
+  const r = fab.getBoundingClientRect();
+  const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+  const W = window.innerWidth, H = window.innerHeight;
+  // วงลอยจากปุ่ม + ไปกลางจอระหว่างขยาย: ขนาดแค่คลุมจอจากตรงกลาง (เล็กกว่าขยายจากมุมจอ ~3 เท่า เบา GPU)
+  const size = Math.ceil(Math.hypot(W, H) * 1.02);
+  const burst = h('div', { class: 'burst', 'aria-hidden': 'true', style: `width:${size}px;height:${size}px;left:${(W - size) / 2}px;top:${(H - size) / 2}px` },
+    h('i', { class: 'burst-lines' }));
+  document.body.append(burst);
+  fab.animate([{ transform: 'scale(1)' }, { transform: 'scale(.86)', offset: 0.35 }, { transform: 'scale(1)' }], { duration: 260, easing: 'ease-out' });
+  const s0 = (r.width / size).toFixed(4), dx = (cx - W / 2).toFixed(1), dy = (cy - H / 2).toFixed(1);
+  burst.animate([
+    { transform: `translate(${dx}px, ${dy}px) scale(${s0}) rotate(-180deg)` },
+    { transform: 'translate(0, 0) scale(1) rotate(0deg)' }
+  ], { duration: 560, easing: 'cubic-bezier(.45, 0, .15, 1)', fill: 'forwards' });   // เริ่มช้าพอให้เห็นวงหมุนออกจากปุ่ม แล้วเร่งจนเต็มจอ
+  setTimeout(() => openEntry(null), 420);       // แผ่นจดเลื่อนขึ้นตอนวงเกือบเต็มจอ
+  setTimeout(() => {
+    const fade = burst.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 220, easing: 'ease-in', fill: 'forwards' });
+    fade.onfinish = () => { burst.remove(); bursting = false; };
+  }, 800);
+}
 $('#btn-refresh').addEventListener('click', () => syncNow(false));
 window.addEventListener('online', () => { updateSync(); syncNow(true); });
 window.addEventListener('offline', updateSync);

@@ -438,10 +438,11 @@ h2 { font-size: 15px; font-weight: 700; margin: 0 0 8px; color: var(--text); let
 }
 .tab {
   position: relative; z-index: 1; height: 52px;
-  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
   border: 0; background: none; color: var(--muted); font-size: 11px; font-weight: 600; border-radius: 999px;
 }
 .tab[aria-current="page"] { color: var(--on-ink); }
+.tab span { display: block; line-height: 16px; }   /* สูงคงที่ ไอคอนเลื่อนลงกลางได้เป๊ะตอน dock ย่อ */
 .tab-ink {
   position: absolute; top: 5px; left: 5px; width: 72px; height: 52px; z-index: 0;
   display: flex; pointer-events: none;
@@ -457,7 +458,8 @@ h2 { font-size: 15px; font-weight: 700; margin: 0 0 8px; color: var(--text); let
 }
 .fab:active, .fab.is-pressed { transform: scale(.92); }
 .dock.mini .tabs { transform: scale(.94) translate3d(0, 6px, 0); }
-.dock.mini .tab span { opacity: 0; }
+.dock.mini .tab span { opacity: 0; translate: 0 6px; scale: .7; }
+.dock.mini .tab svg { translate: 0 9px; }   /* (ตัวหนังสือ 16px + ช่องว่าง 2px) ÷ 2 = ไอคอนอยู่กลางปุ่มพอดี */
 .dock.mini .fab { transform: scale(.9) translate3d(0, 6px, 0); }
 
 /* ---------- ดึงลงเพื่อรีเฟรช ---------- */
@@ -778,7 +780,7 @@ h2 { font-size: 15px; font-weight: 700; margin: 0 0 8px; color: var(--text); let
   body.sheet-open .dock { transform: translate3d(0, 140%, 0); }
   .dock { transition: transform .4s var(--ease-sheet); }
   .tabs, .dock .fab { transition: transform var(--d2) var(--e-pop); }
-  .tab span { transition: opacity var(--d1) ease; }
+  .tab span { transition: opacity var(--d1) ease, translate var(--d2) var(--e-std), scale var(--d2) var(--e-std); }
   .ring-fill { transition: stroke-dashoffset .8s var(--e-in), stroke .3s ease; }
   .sb-in { transition: transform .8s var(--e-in); }
   .view.enter .hero .guil { animation: guilloche 2.4s var(--e-in) backwards; }
@@ -799,7 +801,7 @@ h2 { font-size: 15px; font-weight: 700; margin: 0 0 8px; color: var(--text); let
   }
   .fab svg { transition: transform .28s var(--ease-spring); }
   .fab:active svg, .fab.is-pressed svg { transform: rotate(90deg) scale(.92); }
-  .tab svg { transition: transform .3s var(--ease-spring); }
+  .tab svg { transition: transform .3s var(--ease-spring), translate var(--d2) var(--e-pop); }
   .tab-ink { transition: transform .38s var(--ease-spring), opacity .18s ease; }
   .tab-ink::before { will-change: transform; }
   .fab { transition: transform .32s var(--ease-spring), opacity .24s ease; }

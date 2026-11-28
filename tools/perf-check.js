@@ -15,6 +15,7 @@ const SCEN = [
   ['กดเลขในแผ่นจด', async (p) => { for (const k of ['1', '2', '5']) { await p.click(`.keypad button:text-is("${k}")`); await p.waitForTimeout(120); } await p.waitForTimeout(300); }],
   ['กดเลือกหมวด', async (p) => { await p.click('.cat-pill >> nth=1'); await p.waitForTimeout(500); }],
   ['บันทึก + ปิดแผ่นจด + ยอดอัปเดต', async (p) => { await p.click('#entry-save'); await p.waitForTimeout(1600); }],
+  ['ปิดด้วย X (วงย้อนกลับ)', async (p) => { await p.evaluate(() => window.scrollTo(0, 0)); await p.click('#btn-add'); await p.waitForTimeout(900); await p.evaluate(() => { window.__f = []; }); await p.click('#sheet .icon-btn'); await p.waitForTimeout(900); }],
   ['เลื่อนหน้าแรก', async (p) => { for (let i = 0; i < 12; i++) { await p.mouse.wheel(0, 120); await p.waitForTimeout(40); } await p.waitForTimeout(600); }],
 ];
 (async () => {

@@ -1038,15 +1038,21 @@ function showSheet() {
   s.hidden = false;
   document.body.style.overflow = 'hidden';
   document.body.classList.add('sheet-open');
+  if (!(history.state && history.state.ttmSheet)) { try { history.pushState({ ttmSheet: 1 }, ''); } catch (e) { /* ignore */ } }
   if (S.revealNext) { S.revealNext = false; s.classList.add('reveal'); return; }   // เปิดด้วยวงกิโยเช่ (openWithBurst จัดการ animation เอง)
   if (!reduceMotion()) {
     s.classList.add('opening');
     sheetOpenTimer = setTimeout(() => s.classList.remove('opening'), 480);
   }
 }
-function closeSheet() {
+// ปิดแผ่นจด  opts.burst: ปิดด้วยวงกิโยเช่ย้อนกลับเข้าปุ่ม + (เฉพาะแผ่นที่เปิดมาจากปุ่ม +)
+//            opts.fromPop: ถูกเรียกจากปุ่มย้อนกลับของมือถือ (history ถอยไปแล้ว)
+function closeSheet(opts) {
+  opts = opts || {};
   const s = $('#sheet');
-  if (s.hidden) return;
+  if (s.hidden || s.classList.contains('closing')) return;
+  // ปุ่มย้อนกลับของมือถือ: ตอนเปิดแผ่นจดเราใส่ประวัติไว้ 1 ขั้น ปิดด้วยวิธีอื่นต้องถอยประวัติคืนด้วย
+  if (!opts.fromPop && history.state && history.state.ttmSheet) { S.ignorePop = true; history.back(); }
   clearTimeout(sheetOpenTimer);
   document.body.style.overflow = '';
   document.body.classList.remove('sheet-open');
@@ -1056,7 +1062,37 @@ function closeSheet() {
   if (reduceMotion()) { s.hidden = true; return; }
   s.classList.add('closing');
   clearTimeout(sheetTimer);
+  if (opts.burst && s.classList.contains('reveal') && S.burstOrigin && s.animate) { burstClose(s); return; }
   sheetTimer = setTimeout(() => { s.hidden = true; s.classList.remove('closing'); }, 230);
+}
+
+// ย้อนกลับของ openWithBurst: แผ่นจดหดเข้าวงที่เล็กลงจนกลับเข้าปุ่ม + และลายกิโยเช่หมุนย้อนหดตามขอบวง
+function burstClose(s) {
+  const o = S.burstOrigin;
+  const DUR = 520, EASE = 'cubic-bezier(.6, 0, .4, 1)';   // ออกสั้นกว่าเข้านิดหน่อย
+  s.classList.add('burst-out');
+  const sr = s.getBoundingClientRect();
+  const x = (o.cx - sr.left).toFixed(1), y = (o.cy - sr.top).toFixed(1);
+  const clip = s.animate([
+    { clipPath: `circle(${o.R}px at ${x}px ${y}px)`, opacity: 1 },
+    { opacity: 1, offset: 0.75 },
+    { clipPath: `circle(${o.r0.toFixed(1)}px at ${x}px ${y}px)`, opacity: 0 }   // จางช่วงท้าย ให้ปุ่ม + จริงรับต่อ
+  ], { duration: DUR, easing: EASE, fill: 'forwards' });
+  const lines = h('div', { class: 'burst-lines', 'aria-hidden': 'true', style: `width:${o.L}px;height:${o.L}px;left:${o.cx - o.L / 2}px;top:${o.cy - o.L / 2}px` });
+  document.body.append(lines);
+  lines.animate([
+    { transform: `scale(${(o.R / o.k).toFixed(4)}) rotate(0deg)`, opacity: 0 },
+    { opacity: 0.85, offset: 0.4 },
+    { opacity: 1, offset: 0.88 },
+    { transform: `scale(${(o.r0 / o.k).toFixed(4)}) rotate(-140deg)`, opacity: 0 }
+  ], { duration: DUR, easing: EASE, fill: 'forwards' });
+  sheetTimer = setTimeout(() => {
+    s.hidden = true;
+    s.classList.remove('closing', 'burst-out', 'reveal');
+    clip.cancel(); lines.remove();
+    const fab = $('#btn-add');           // ปุ่ม + รับวงกลับเข้าไป
+    if (fab.animate) fab.animate([{ transform: 'scale(1)' }, { transform: 'scale(1.12)', offset: 0.4 }, { transform: 'scale(1)' }], { duration: 260, easing: 'ease-out' });
+  }, DUR);
 }
 
 function openEntry(tx) {
@@ -1639,7 +1675,7 @@ function renderSheet() {
     keys.map((k) => h('button', { type: 'button', 'aria-label': k === 'del' ? 'ลบตัวเลข' : null, onclick: () => keyPress(k) }, k === 'del' ? uiIcon('backspace', 21) : k)),
     h('button', { type: 'button', class: 'save', id: 'entry-save', onclick: submitEntry }, 'บันทึก'));
 
-  const btnClose = h('button', { type: 'button', class: 'icon-btn', 'aria-label': 'ปิด', onclick: closeSheet }, uiIcon('close', 20));
+  const btnClose = h('button', { type: 'button', class: 'icon-btn', 'aria-label': 'ปิด', onclick: () => closeSheet({ burst: true }) }, uiIcon('close', 20));
   const sheet = $('#sheet');
   sheet.dataset.type = f.type;
   sheet.classList.remove('typing');
@@ -1865,13 +1901,18 @@ document.addEventListener('keydown', (e) => {
   else if (e.key === '.') keyPress('.');
   else if (e.key === 'Backspace') keyPress('del');
   else if (e.key === 'Enter') submitEntry();
-  else if (e.key === 'Escape') closeSheet();
+  else if (e.key === 'Escape') closeSheet({ burst: true });
 });
 $('#main').addEventListener('focusout', () => {
   setTimeout(() => { if (S.deferRender && !isEditingMain()) render({ bg: true }); }, 0);
 });
 document.querySelectorAll('.tab').forEach((b) => b.addEventListener('click', () => { buzz(5); go(b.dataset.view); }));
 $('#btn-add').addEventListener('click', () => { buzz(8); openWithBurst(); });
+// ปุ่ม/ท่าย้อนกลับของมือถือ: ถ้าแผ่นจดเปิดอยู่ ให้ปิดแผ่นจด (ไม่ออกจากแอพ)
+window.addEventListener('popstate', () => {
+  if (S.ignorePop) { S.ignorePop = false; return; }
+  if (sheetOpen()) closeSheet({ burst: true, fromPop: true });
+});
 
 // กด + : ลายกิโยเช่มีศูนย์กลางที่ปุ่ม + ขยายออก และหน้าจดค่อย ๆ เผยออกมาภายในวงพร้อมกัน
 // หน้าจดเผยผ่านช่องวงกลม (clip-path) ส่วนลายขยายตามขอบวงด้วยสูตรเดียวกัน ขอบลายจึงวิ่งไปพร้อมขอบที่เผย
@@ -1900,6 +1941,7 @@ function openWithBurst() {
     { transform: `scale(${(R / k).toFixed(4)}) rotate(0deg)`, opacity: 0 }
   ], { duration: DUR, easing: EASE, fill: 'forwards' });
   const t0 = performance.now();
+  S.burstOrigin = { cx, cy, R, r0: r.width / 2, L, k };   // ไว้ใช้ตอนปิดย้อนกลับ
   // 2) เฟรมถัดไปค่อยสร้างหน้าจด แล้วให้ช่องวงกลมกระโดดไปทันเวลาที่ลายขยายไปแล้ว (ยังซิงค์กันพอดี)
   afterPaint(() => {
     S.revealNext = true;

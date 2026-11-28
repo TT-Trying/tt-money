@@ -71,6 +71,10 @@
   ลายเริ่มก่อน แล้วสร้างหน้าจดใน `afterPaint` และตั้ง `clip.currentTime` ให้ทันลาย
   แผ่นจดที่เปิดแบบนี้มี class `.reveal` ค้างไว้จนปิด (ถ้าเอาออกก่อน แผ่นจดจะเลื่อนขึ้นซ้ำ)
   ห้ามใช้วงทึบขนาดเต็มจอที่ขยายจากมุม (~1,700px ทำให้สะดุด 12 เฟรมตอนวัดที่ CPU 4x)
+- ปิดแผ่นจด: `closeSheet({ burst: true })` (ปุ่ม X, Escape, ปุ่มย้อนกลับ) ย้อน animation เข้าปุ่ม + ผ่าน `burstClose()`
+  เฉพาะแผ่นที่เปิดจากปุ่ม + (`.reveal`) ส่วนแก้ไขรายการ/บันทึก/ลากปิด ใช้เลื่อนลง (`sheet-out`)
+  ปุ่มย้อนกลับของมือถือ: `showSheet` ใส่ `history.pushState({ ttmSheet: 1 })` และ `popstate` ปิดแผ่นจด
+  ปิดด้วยวิธีอื่นต้อง `history.back()` คืน (มี `S.ignorePop` กันปิดซ้ำ)
 - เช็คด้วย `node tools/perf-check.js "$PWD/demo.html" 4` ทั้งก่อนและหลังแก้ UI
 
 ## Backend (`backend/Code.gs`)
